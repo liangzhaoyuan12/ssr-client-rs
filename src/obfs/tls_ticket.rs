@@ -456,6 +456,10 @@ impl Obfs for Tls12TicketAuthObfs {
     fn need_feedback(&self) -> bool {
         true
     }
+
+    fn needs_handshake(&self) -> bool {
+        true
+    }
 }
 
 /// Generate random number in range [min, max)

@@ -25,13 +25,21 @@ pub trait Obfs: Send {
 
     /// Whether this obfs needs feedback (send empty data back).
     fn need_feedback(&self) -> bool;
+
+    /// Whether this obfs performs an explicit handshake before any relayed data.
+    ///
+    /// Only `tls1.2_ticket_auth` does (ClientHello → server response → CCS+Finished).
+    /// Plain and HTTP obfs send their framing with the first data packet, so the
+    /// client must NOT block waiting for a server response that never comes.
+    fn needs_handshake(&self) -> bool {
+        false
+    }
 }
 
 /// Create an obfs instance by name.
-/// Returns None for "plain" (no obfuscation needed).
 pub fn create_obfs(name: &str, server_host: &str, server_port: u16, extra_param: &str) -> Option<Box<dyn Obfs>> {
     match name {
-        "plain" => None,
+        "plain" => Some(Box::new(plain::PlainObfs::new())),
         "http_simple" => Some(Box::new(http_simple::HttpSimpleObfs::new(
             server_host.to_string(),
             server_port,
@@ -70,7 +78,11 @@ mod tests {
     #[test]
     fn test_create_obfs_plain() {
         let obfs = create_obfs("plain", "example.com", 80, "");
-        assert!(obfs.is_none());
+        assert!(obfs.is_some());
+        let obfs = obfs.unwrap();
+        assert_eq!(obfs.get_overhead(), 0);
+        assert!(!obfs.need_feedback());
+        assert!(!obfs.needs_handshake());
     }
 
     #[test]
@@ -80,6 +92,7 @@ mod tests {
         let obfs = obfs.unwrap();
         assert_eq!(obfs.get_overhead(), 0);
         assert!(!obfs.need_feedback());
+        assert!(!obfs.needs_handshake());
     }
 
     #[test]
@@ -89,6 +102,19 @@ mod tests {
         let obfs = obfs.unwrap();
         assert_eq!(obfs.get_overhead(), 5);
         assert!(obfs.need_feedback());
+        assert!(obfs.needs_handshake());
+    }
+
+    #[test]
+    fn test_only_tls_ticket_needs_handshake() {
+        // Any obfs that does NOT handshake must be safe to relay into immediately;
+        // guard against a future variant silently opting into the TLS path.
+        for name in ["plain", "http_simple", "http_post", "http_mix"] {
+            let obfs = create_obfs(name, "example.com", 80, "").unwrap();
+            assert!(!obfs.needs_handshake(), "{name} should not handshake");
+        }
+        let obfs = create_obfs("tls1.2_ticket_auth", "example.com", 443, "").unwrap();
+        assert!(obfs.needs_handshake());
     }
 
     #[test]

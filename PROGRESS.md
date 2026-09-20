@@ -92,11 +92,58 @@ unsigned int rand_len = (datalength > 400 ? (xorshift128plus() & 0x1FF)
 debug 构建只有 ~507 KB/s，release 构建 4.52 MB/s —— 8 倍差距全部来自构建优化级别，
 不是实现问题。**请用 `cargo build --release`**。
 
+## 端到端支持矩阵（实测）
+
+测试方法：本地 `ssr-server` + 本地 `python -m http.server` 目标，curl 经 SOCKS5 走完整链路。
+对照组是同机的 C 客户端 (`/opt/ssr/ssr-client`)，脚本在 `/tmp/matrix_test.py`。
+
+**总计 16/37 通过（C 客户端 32/37）**
+
+| 维度 | 通过 | 不支持 |
+|---|---|---|
+| **obfs (5/5)** ✅ | plain, http_simple, http_post, http_mix, tls1.2_ticket_auth | — |
+| **protocol (2/4)** | auth_aes128_sha1, auth_aes128_md5 | auth_sha1_v4, auth_chain_a |
+| **cipher (9/28)** | aes-128/192/256-cfb, aes-128/192/256-ctr, bf-cfb, salsa20, chacha20-ietf | 见下 |
+
+cipher 缺口分三类：
+
+1. **需要 AEAD 分帧**（5 个）：`aes-128/192/256-gcm`、`chacha20-ietf-poly1305`、
+   `xchacha20-ietf-poly1305`。这些在 SSR 里不是流密码 —— 用的是 Shadowsocks-AEAD 的
+   分帧（2 字节长度前缀 + 16 字节 tag + salt），当前 relay 走的是流式 `ss_encrypt` 路径，
+   需要单独实现。
+2. **未实现的流密码**（6 个）：`camellia-128/192/256-cfb`（缺 crate）、
+   `rc4`/`rc4-md5`/`rc4-md5-6`、`chacha20`（原始 8 字节 nonce 变体，
+   需要 `chacha20` 的 `legacy` feature）、`none`/`table`（服务器回绝，原因待查）。
+   `camellia-*` 和 AEAD 现在会返回**明确错误**而不是 panic。
+3. **服务端本身不支持**（5 个，C 客户端同样失败，非我方问题）：
+   `cast5-cfb`、`des-cfb`、`idea-cfb`、`rc2-cfb`、`seed-cfb`。
+
+> 生产配置 `aes-256-cfb + auth_aes128_sha1 + tls1.2_ticket_auth` 在这三类之外，完全正常。
+
+## 本轮（Session 4）修复
+
+1. **obfs 接线错误**（让 4 个 obfs 从不可用变可用）
+   - `create_obfs("plain")` 返回 `None`，而调用方把它当成错误 → 直接报 "Unsupported obfs"
+   - 更根本的：`perform_obfs_handshake` 无条件等服务器响应。plain/http_* 这几种 obfs
+     把分帧放在第一个数据包里，服务端根本不会先回包，于是白等 10 秒超时。
+     给 `Obfs` trait 加了 `needs_handshake()`（默认 `false`，只有 tls1.2_ticket_auth 覆盖为 `true`）。
+2. **panic 改成错误返回**：`ObfsRelay::new` 里 `create_encrypt_ctx().expect(...)` 在
+   per-connection 任务里 panic，会让 worker 静默死掉、SOCKS5 客户端无限挂起且没有任何提示。
+   改为 `SsrResult<Self>` 向上传递。
+3. **协议名不再静默回退**：之前任何未知 `protocol` 都会退化成 `new_sha1`，
+   于是用一个算法去对另一种算法的服务端，帧能解密但永远过不了 MAC。
+   现在不支持的协议直接返回明确错误。
+4. **新增 `chacha20-ietf`**（12 字节 nonce，直接用 `chacha20::ChaCha20`）。
+5. **新增 `rc4-md5` / `rc4-md5-6`** 的 ctx 创建（`MD5(key ‖ iv)` 派生密钥，不再跳 IV），
+   但实测仍不通，标记为待查。
+
 ## 后续可做（非阻塞）
 
-1. UDP relay（当前只实现 TCP；hk.json 里 `"udp": true` 未使用）
-2. 更多 protocol/obfs 组合的端到端验证（目前只验证了 auth_aes128_sha1 + tls1.2_ticket_auth）
-3. `encrypt_ctx` / `decrypt_ctx` 每包一次 `Vec` 分配，可考虑复用缓冲区进一步提速
+1. **UDP relay**（当前只实现 TCP；hk.json 里 `"udp": true` 未使用）
+2. **AEAD 分帧**（5 个 cipher）—— 如果要用 `aes-256-gcm` / `chacha20-poly1305`
+3. **补 protocol**：auth_sha1_v4、auth_chain_a 及注册表里其余 12 个
+4. 排查 `none`/`table`/`rc4` 系列为何被服务端回绝
+5. `encrypt_ctx` / `decrypt_ctx` 每包一次 `Vec` 分配，可考虑复用缓冲区进一步提速
 
 ## 历史记录
 

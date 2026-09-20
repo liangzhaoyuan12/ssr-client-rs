@@ -135,19 +135,21 @@ impl ObfsRelay {
         cipher_env: crate::crypto::cipher_env::CipherEnv,
         mut protocol: crate::protocol::auth_aes128::AuthAES128,
         addr_pkg: Vec<u8>,
-    ) -> Self {
+    ) -> SsrResult<Self> {
         let (local_read, local_write) = local.into_split();
         let (remote_read, remote_write) = remote.into_split();
 
-        // Create the stateful encrypt context (generates random IV)
-        let (encrypt_ctx, iv) = cipher_env.create_encrypt_ctx()
-            .expect("Failed to create encrypt context");
+        // Create the stateful encrypt context (generates random IV).
+        // Propagate failure instead of panicking: this runs inside a spawned
+        // per-connection task, so a panic here silently kills the worker and
+        // leaves the SOCKS5 client hanging with no diagnostic.
+        let (encrypt_ctx, iv) = cipher_env.create_encrypt_ctx()?;
 
         // The protocol's MAC key prefix must be the cipher IV we transmit
         // (C ssr_executive.c:400 sets server_info.iv = enc_ctx_get_iv()).
         protocol.set_server_iv(iv.clone());
         
-        Self {
+        Ok(Self {
             local_read,
             local_write,
             remote_read,
@@ -162,7 +164,7 @@ impl ObfsRelay {
             addr_pkg,
             addr_sent: false,
             buffer_size: 8192,
-        }
+        })
     }
 
     /// Run the obfs-aware relay.
@@ -361,13 +363,17 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
     obfs_inst.set_key(env.key().to_vec());
     ssr_debug!("[conn] Created obfs instance");
 
-    // Step 4: Perform obfs handshake (ClientHello → server response → Finished+AppData)
-    ssr_debug!("[conn] Starting obfs handshake");
-    match perform_obfs_handshake(&mut remote_stream, &mut obfs_inst).await {
-        Ok(()) => ssr_debug!("[conn] Obfs handshake completed"),
-        Err(e) => {
-            ssr_debug!("[conn] Obfs handshake failed: {e}");
-            return Err(e);
+    // Step 4: Perform the obfs handshake, if this obfs uses one.
+    // Plain / HTTP obfs carry their framing with the first data packet and send
+    // nothing up front, so waiting for a response would just stall for the timeout.
+    if obfs_inst.needs_handshake() {
+        ssr_debug!("[conn] Starting obfs handshake");
+        match perform_obfs_handshake(&mut remote_stream, &mut obfs_inst).await {
+            Ok(()) => ssr_debug!("[conn] Obfs handshake completed"),
+            Err(e) => {
+                ssr_debug!("[conn] Obfs handshake failed: {e}");
+                return Err(e);
+            }
         }
     }
 
@@ -384,21 +390,28 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
     // Step 6: Relay data between client and SSR server (with obfs encode/decode)
     use crate::protocol::auth_aes128::AuthAES128;
     use crate::protocol::{Protocol, ServerInfo};
-    let mut protocol = if config.protocol == "auth_aes128_md5" {
-        AuthAES128::new_md5(ServerInfo {
+    let mut protocol = match config.protocol.as_str() {
+        "auth_aes128_md5" => AuthAES128::new_md5(ServerInfo {
             key: env.key().to_vec(),
             ..Default::default()
-        })
-    } else {
-        AuthAES128::new_sha1(ServerInfo {
+        }),
+        "auth_aes128_sha1" => AuthAES128::new_sha1(ServerInfo {
             key: env.key().to_vec(),
             ..Default::default()
-        })
+        }),
+        other => {
+            // Do NOT silently fall back to a default variant: every protocol
+            // variant uses a different HMAC/hash/salt, so guessing produces
+            // frames that decrypt but never authenticate.
+            return Err(SsrError::Protocol(format!(
+                "Unsupported protocol '{other}' (supported: auth_aes128_md5, auth_aes128_sha1)"
+            )));
+        }
     };
     protocol.init_user_key();
 
     ssr_debug!("[conn] Starting obfs relay");
-    let relay = ObfsRelay::new(stream, remote_stream, obfs_inst, env, protocol, addr_pkg);
+    let relay = ObfsRelay::new(stream, remote_stream, obfs_inst, env, protocol, addr_pkg)?;
     let (up, down) = relay.run().await?;
 
     ssr_debug!("[conn] Relay finished: upstream={up}, downstream={down}");

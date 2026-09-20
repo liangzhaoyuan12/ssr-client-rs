@@ -152,6 +152,16 @@ impl CipherEnv {
                 let piv = if iv.len() == 8 { let mut v = [0u8; 12]; v[..8].copy_from_slice(iv); v.to_vec() } else { iv.to_vec() };
                 EncryptContext::ChaCha20 { cipher: <chacha20::ChaCha20 as cipher::KeyIvInit>::new_from_slices(&self.key, &piv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? }
             }
+            CT::ChaCha20IETF => EncryptContext::ChaCha20 { cipher: <chacha20::ChaCha20 as cipher::KeyIvInit>::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? },
+            CT::RC4Md5 | CT::RC4Md56 => {
+                // SSR derives a per-connection RC4 key from key || iv and then
+                // uses no further IV (encrypt.c:602-607). rc4-md5-6 keeps only
+                // the first 6 bytes of the digest.
+                let digest = crate::utils::hash::md5_multi(&[&self.key, iv]);
+                let klen = if self.method == CT::RC4Md56 { 6 } else { 16 };
+                let c = <rc4::Rc4 as cipher::KeyInit>::new_from_slice(&digest[..klen]).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))?;
+                EncryptContext::RC4 { cipher: c }
+            }
             _ => return Err(crate::error::SsrError::crypto(format!("Cipher {:?} not supported", self.method))),
         })
     }
@@ -198,6 +208,13 @@ impl CipherEnv {
             CT::ChaCha20 => {
                 let piv = if iv.len() == 8 { let mut v = [0u8; 12]; v[..8].copy_from_slice(iv); v.to_vec() } else { iv.to_vec() };
                 DecryptContext::ChaCha20 { cipher: <chacha20::ChaCha20 as cipher::KeyIvInit>::new_from_slices(&self.key, &piv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? }
+            }
+            CT::ChaCha20IETF => DecryptContext::ChaCha20 { cipher: <chacha20::ChaCha20 as cipher::KeyIvInit>::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? },
+            CT::RC4Md5 | CT::RC4Md56 => {
+                let digest = crate::utils::hash::md5_multi(&[&self.key, iv]);
+                let klen = if self.method == CT::RC4Md56 { 6 } else { 16 };
+                let c = <rc4::Rc4 as cipher::KeyInit>::new_from_slice(&digest[..klen]).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))?;
+                DecryptContext::RC4 { cipher: c }
             }
             _ => return Err(crate::error::SsrError::crypto(format!("Cipher {:?} not supported", self.method))),
         })
