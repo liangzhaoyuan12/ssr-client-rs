@@ -133,7 +133,7 @@ impl ObfsRelay {
         remote: TcpStream,
         obfs: Box<dyn crate::obfs::Obfs>,
         cipher_env: crate::crypto::cipher_env::CipherEnv,
-        protocol: crate::protocol::auth_aes128::AuthAES128,
+        mut protocol: crate::protocol::auth_aes128::AuthAES128,
         addr_pkg: Vec<u8>,
     ) -> Self {
         let (local_read, local_write) = local.into_split();
@@ -142,6 +142,10 @@ impl ObfsRelay {
         // Create the stateful encrypt context (generates random IV)
         let (encrypt_ctx, iv) = cipher_env.create_encrypt_ctx()
             .expect("Failed to create encrypt context");
+
+        // The protocol's MAC key prefix must be the cipher IV we transmit
+        // (C ssr_executive.c:400 sets server_info.iv = enc_ctx_get_iv()).
+        protocol.set_server_iv(iv.clone());
         
         Self {
             local_read,
@@ -178,9 +182,9 @@ impl ObfsRelay {
         // Step 1: Send address package as first upstream data
         // This triggers obfs to generate CCS+Finished + pack_data(address)
         if !self.addr_pkg.is_empty() {
-            eprintln!("[relay] Sending address package: {} bytes", self.addr_pkg.len());
+            ssr_debug!("[relay] Sending address package: {} bytes", self.addr_pkg.len());
             let framed = self.protocol.client_pre_encrypt(&self.addr_pkg)?;
-            eprintln!("[relay] Address framed: {} bytes", framed.len());
+            ssr_debug!("[relay] Address framed: {} bytes", framed.len());
             let mut encrypted = self.cipher_env.encrypt_ctx(&mut self.encrypt_ctx, &framed, self.first_encrypt)?;
             if self.first_encrypt {
                 let mut with_iv = Vec::with_capacity(self.cipher_iv.len() + encrypted.len());
@@ -189,9 +193,10 @@ impl ObfsRelay {
                 encrypted = with_iv;
                 self.first_encrypt = false;
             }
+            ssr_debug!("[relay] Encrypted: {} bytes, first 48: {}", encrypted.len(), encrypted.iter().take(48).map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" "));
             let encoded = self.obfs.client_encode(&encrypted)?;
-            eprintln!("[relay] Address obfs encoded: {} bytes", encoded.len());
-            eprintln!("[relay] First 100 bytes: {}", encoded.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" "));
+            ssr_debug!("[relay] Address obfs encoded: {} bytes", encoded.len());
+            ssr_debug!("[relay] FULL HEX: {}", encoded.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(""));
             self.remote_write.write_all(&encoded).await?;
             self.addr_sent = true;
             total_up += self.addr_pkg.len() as u64;
@@ -204,10 +209,10 @@ impl ObfsRelay {
             ).await;
             match n {
                 Ok(Ok(0)) => {
-                    eprintln!("[relay] Server closed after address");
+                    ssr_debug!("[relay] Server closed after address");
                 }
                 Ok(Ok(n)) => {
-                    eprintln!("[relay] Server feedback: {} bytes", n);
+                    ssr_debug!("[relay] Server feedback: {} bytes", n);
                     // Process server feedback (obfs decode, cipher decrypt, protocol post_decrypt)
                     let (decrypted_obfs, _needs_feedback) = self.obfs.client_decode(&remote_buf[..n])?;
                     if !decrypted_obfs.is_empty() {
@@ -226,36 +231,36 @@ impl ObfsRelay {
                     total_down += n as u64;
                 }
                 _ => {
-                    eprintln!("[relay] Server feedback timeout/error");
+                    ssr_debug!("[relay] Server feedback timeout/error");
                 }
             }
         }
 
-        eprintln!("[relay] Starting streaming relay loop");
+        ssr_debug!("[relay] Starting streaming relay loop");
         loop {
             tokio::select! {
                 result = self.local_read.read(&mut local_buf) => {
                     match result {
                         Ok(0) => {
-                            eprintln!("[relay] EOF from client");
+                            ssr_debug!("[relay] EOF from client");
                             break;
                         }
                         Ok(n) => {
-                            eprintln!("[relay] Upstream: {} bytes from client", n);
+                            ssr_debug!("[relay] Upstream: {} bytes from client", n);
                             // Protocol: frame the data
                             let framed = self.protocol.client_pre_encrypt(&local_buf[..n])?;
-                            eprintln!("[relay] Protocol framed: {} bytes", framed.len());
+                            ssr_debug!("[relay] Protocol framed: {} bytes", framed.len());
                             // Stateful cipher: encrypt with stream state
                             let mut encrypted = self.cipher_env.encrypt_ctx(&mut self.encrypt_ctx, &framed, false)?;
-                            eprintln!("[relay] Encrypted: {} bytes", encrypted.len());
+                            ssr_debug!("[relay] Encrypted: {} bytes", encrypted.len());
                             // Obfs: wrap in TLS record
                             let encoded = self.obfs.client_encode(&encrypted)?;
-                            eprintln!("[relay] Obfs encoded: {} bytes", encoded.len());
+                            ssr_debug!("[relay] Obfs encoded: {} bytes", encoded.len());
                             self.remote_write.write_all(&encoded).await?;
                             total_up += n as u64;
                         }
                         Err(e) => {
-                            eprintln!("[relay] Upstream read error: {e}");
+                            ssr_debug!("[relay] Upstream read error: {e}");
                             break;
                         }
                     }
@@ -263,14 +268,14 @@ impl ObfsRelay {
                 result = self.remote_read.read(&mut remote_buf) => {
                     match result {
                         Ok(0) => {
-                            eprintln!("[relay] EOF from server");
+                            ssr_debug!("[relay] EOF from server");
                             break;
                         }
                         Ok(n) => {
-                            eprintln!("[relay] Downstream: {} bytes from server", n);
+                            ssr_debug!("[relay] Downstream: {} bytes from server", n);
                             // Obfs: unwrap TLS record
                             let (decrypted_obfs, _needs_feedback) = self.obfs.client_decode(&remote_buf[..n])?;
-                            eprintln!("[relay] Obfs decoded: {} bytes", decrypted_obfs.len());
+                            ssr_debug!("[relay] Obfs decoded: {} bytes", decrypted_obfs.len());
                             if decrypted_obfs.is_empty() {
                                 continue;
                             }
@@ -284,17 +289,17 @@ impl ObfsRelay {
                                 self.decrypt_ctx = Some(dctx);
                                 self.cipher_env.decrypt_ctx(self.decrypt_ctx.as_mut().unwrap(), &data)?
                             };
-                            eprintln!("[relay] Decrypted: {} bytes", decrypted_cipher.len());
+                            ssr_debug!("[relay] Decrypted: {} bytes", decrypted_cipher.len());
                             // Protocol: unwrap framing
                             let decoded = self.protocol.client_post_decrypt(&decrypted_cipher)?;
-                            eprintln!("[relay] Protocol decoded: {} bytes", decoded.len());
+                            ssr_debug!("[relay] Protocol decoded: {} bytes", decoded.len());
                             if !decoded.is_empty() {
                                 self.local_write.write_all(&decoded).await?;
                             }
                             total_down += n as u64;
                         }
                         Err(e) => {
-                            eprintln!("[relay] Downstream read error: {e}");
+                            ssr_debug!("[relay] Downstream read error: {e}");
                             break;
                         }
                     }
@@ -338,10 +343,10 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
     }
 
     // Step 3: Establish tunnel to remote SSR server
-    eprintln!("[conn] CONNECT {}:{}", connect_req.addr.display(), connect_req.port);
+    ssr_debug!("[conn] CONNECT {}:{}", connect_req.addr.display(), connect_req.port);
 
     let mut remote_stream = connect_to_ssr_server(config).await?;
-    eprintln!("[conn] Connected to SSR server");
+    ssr_debug!("[conn] Connected to SSR server");
 
     // Create cipher and obfs instances
     use crate::crypto::cipher_env::CipherEnv;
@@ -354,14 +359,14 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
     )
     .ok_or_else(|| SsrError::Obfs(format!("Unsupported obfs: {}", config.obfs)))?;
     obfs_inst.set_key(env.key().to_vec());
-    eprintln!("[conn] Created obfs instance");
+    ssr_debug!("[conn] Created obfs instance");
 
     // Step 4: Perform obfs handshake (ClientHello → server response → Finished+AppData)
-    eprintln!("[conn] Starting obfs handshake");
+    ssr_debug!("[conn] Starting obfs handshake");
     match perform_obfs_handshake(&mut remote_stream, &mut obfs_inst).await {
-        Ok(()) => eprintln!("[conn] Obfs handshake completed"),
+        Ok(()) => ssr_debug!("[conn] Obfs handshake completed"),
         Err(e) => {
-            eprintln!("[conn] Obfs handshake failed: {e}");
+            ssr_debug!("[conn] Obfs handshake failed: {e}");
             return Err(e);
         }
     }
@@ -369,28 +374,34 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
     // Step 5: Send SOCKS5 success reply to client
     let reply = build_success_reply(connect_req.addr.atyp());
     stream.write_all(&reply).await?;
-    eprintln!("[conn] Sent SOCKS5 success reply");
+    ssr_debug!("[conn] Sent SOCKS5 success reply");
 
     // Step 5.5: Build address package (ATYP + addr + port) for SSR protocol
     // The SSR protocol expects the address as the first data payload
     let addr_pkg = build_address_package(&connect_req.addr, connect_req.port);
-    eprintln!("[conn] Address package: {} bytes", addr_pkg.len());
+    ssr_debug!("[conn] Address package: {} bytes", addr_pkg.len());
 
     // Step 6: Relay data between client and SSR server (with obfs encode/decode)
     use crate::protocol::auth_aes128::AuthAES128;
     use crate::protocol::{Protocol, ServerInfo};
-    let mut protocol = AuthAES128::new_md5(ServerInfo {
-        key: env.key().to_vec(),
-        iv: vec![0u8; 16],
-        ..Default::default()
-    });
+    let mut protocol = if config.protocol == "auth_aes128_md5" {
+        AuthAES128::new_md5(ServerInfo {
+            key: env.key().to_vec(),
+            ..Default::default()
+        })
+    } else {
+        AuthAES128::new_sha1(ServerInfo {
+            key: env.key().to_vec(),
+            ..Default::default()
+        })
+    };
     protocol.init_user_key();
 
-    eprintln!("[conn] Starting obfs relay");
+    ssr_debug!("[conn] Starting obfs relay");
     let relay = ObfsRelay::new(stream, remote_stream, obfs_inst, env, protocol, addr_pkg);
     let (up, down) = relay.run().await?;
 
-    eprintln!("[conn] Relay finished: upstream={up}, downstream={down}");
+    ssr_debug!("[conn] Relay finished: upstream={up}, downstream={down}");
     Ok(())
 }
 
@@ -424,7 +435,7 @@ async fn read_connect_request(stream: &mut TcpStream) -> SsrResult<socks5::Conne
         return Err(SsrError::socks5("Client closed connection during CONNECT"));
     }
 
-    eprintln!("[socks5] Raw CONNECT: {} bytes: {}", n, buf[..n].iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" "));
+    ssr_debug!("[socks5] Raw CONNECT: {} bytes: {}", n, buf[..n].iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" "));
 
     parse_connect_request(&buf[..n])
 }
@@ -457,7 +468,7 @@ async fn perform_obfs_handshake(
 
     // Send ClientHello
     remote.write_all(&client_hello).await?;
-    eprintln!("[obfs] Sent ClientHello: {} bytes", client_hello.len());
+    ssr_debug!("[obfs] Sent ClientHello: {} bytes", client_hello.len());
 
     // Read server response with timeout
     let mut buf = vec![0u8; 8192];
@@ -471,11 +482,11 @@ async fn perform_obfs_handshake(
     if n == 0 {
         return Err(SsrError::Connection("Server closed connection during handshake".to_string()));
     }
-    eprintln!("[obfs] Received server response: {} bytes", n);
+    ssr_debug!("[obfs] Received server response: {} bytes", n);
 
     // Process server response
     let (_decoded, needs_feedback) = obfs_inst.client_decode(&buf[..n])?;
-    eprintln!("[obfs] Needs feedback: {}", needs_feedback);
+    ssr_debug!("[obfs] Needs feedback: {}", needs_feedback);
 
     // NOTE: We do NOT send the Finished+AppData here.
     // The relay will send it with the first real data from the SOCKS5 client.

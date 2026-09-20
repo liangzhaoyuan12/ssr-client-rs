@@ -1,6 +1,6 @@
 use crate::error::SsrResult;
 use crate::utils::base64::b64encode;
-use crate::utils::hash::{hmac_md5, hmac_sha1, md5};
+use crate::utils::hash::{hmac_md5, hmac_sha1, md5, sha1};
 use crate::crypto::bytes_to_key::bytes_to_key;
 use super::{Protocol, GlobalData, ServerInfo, get_s5_head_size, memintcopy_lt, XorShift128Plus};
 
@@ -18,11 +18,17 @@ pub struct AuthAES128 {
     recv_id: u32,
     last_data_len: usize,
     salt: &'static str,
-    hash_fn: fn(&[u8]) -> [u8; 16],  // md5 or sha1 truncated
-    hmac_fn: fn(&[u8], &[u8]) -> [u8; 16],  // hmac_md5 or hmac_sha1
+    hash_fn: fn(&[u8]) -> Vec<u8>,  // md5 (16B) or sha1 (20B)
+    hmac_fn: fn(&[u8], &[u8]) -> Vec<u8>,  // hmac_md5 or hmac_sha1
     hash_len: usize,
     rng: XorShift128Plus,
 }
+
+fn hexs(b: &[u8]) -> String { b.iter().map(|x| format!("{:02x}", x)).collect() }
+fn hash_md5_v(data: &[u8]) -> Vec<u8> { md5(data).to_vec() }
+fn hash_sha1_v(data: &[u8]) -> Vec<u8> { sha1(data).to_vec() }
+fn hmac_md5_v(key: &[u8], data: &[u8]) -> Vec<u8> { hmac_md5(key, data).to_vec() }
+fn hmac_sha1_v(key: &[u8], data: &[u8]) -> Vec<u8> { hmac_sha1(key, data).to_vec() }
 
 impl AuthAES128 {
     pub fn new_md5(server_info: ServerInfo) -> Self {
@@ -41,8 +47,8 @@ impl AuthAES128 {
             recv_id: 1,
             last_data_len: 0,
             salt: "auth_aes128_md5",
-            hash_fn: md5,
-            hmac_fn: hmac_md5,
+            hash_fn: hash_md5_v,
+            hmac_fn: hmac_md5_v,
             hash_len: 16,
             rng: XorShift128Plus::new(seed_val),
         }
@@ -64,8 +70,8 @@ impl AuthAES128 {
             recv_id: 1,
             last_data_len: 0,
             salt: "auth_aes128_sha1",
-            hash_fn: md5,
-            hmac_fn: hmac_md5, // Will be overridden below
+            hash_fn: hash_sha1_v,
+            hmac_fn: hmac_sha1_v,
             hash_len: 20,
             rng: XorShift128Plus::new(seed_val),
         }
@@ -93,10 +99,21 @@ impl AuthAES128 {
         self.user_key = self.server_info.key.clone();
     }
 
-    fn get_rand_len(&mut self, _datalength: usize, _fulldatalength: usize) -> usize {
-        // C code: unsigned char rand_len = (xorshift128plus() & 0xF) + 1;
-        // Both pack_data and pack_auth_data use 1-16 bytes random padding
-        (self.rng.next() & 0xF) as usize + 1
+    fn get_rand_len(&mut self, datalength: usize, fulldatalength: usize) -> usize {
+        // C code get_rand_len (auth.c:1000-1015)
+        if datalength > 1300 || self.last_data_len > 1300 || fulldatalength >= self.server_info.buffer_size as usize {
+            return 0;
+        }
+        if datalength > 1100 {
+            return (self.rng.next() & 0x7F) as usize;
+        }
+        if datalength > 900 {
+            return (self.rng.next() & 0xFF) as usize;
+        }
+        if datalength > 400 {
+            return (self.rng.next() & 0x1FF) as usize;
+        }
+        (self.rng.next() & 0x3FF) as usize
     }
 
     fn pack_data(&mut self, data: &[u8], fulldatalength: usize) -> Vec<u8> {
@@ -144,12 +161,24 @@ impl AuthAES128 {
         out
     }
 
+    /// Set the server IV. Must equal the transmitted cipher IV — the SSR server
+    /// uses the received cipher IV as the MAC-key prefix (C ssr_executive.c:400,
+    /// auth.c:1398-1399).
+    pub fn set_server_iv(&mut self, iv: Vec<u8>) {
+        self.server_info.iv = iv;
+    }
+
     fn pack_auth_data(&mut self, data: &[u8]) -> Vec<u8> {
         self.init_user_key();
 
-        // C code: unsigned char rand_len = (xorshift128plus() & 0xF) + 1;
-        // Matches C auth_aes128 pack_auth_data
-        let rand_len = ((self.rng.next() & 0xF) + 1) as usize;
+        // C code auth_aes128_sha1_pack_auth_data line 1084:
+        //   unsigned int rand_len = (datalength > 400 ? (xorshift128plus() & 0x1FF)
+        //                                             : (xorshift128plus() & 0x3FF));
+        let rand_len = if data.len() > 400 {
+            (self.rng.next() & 0x1FF) as usize
+        } else {
+            (self.rng.next() & 0x3FF) as usize
+        };
         let data_offset = rand_len + 16 + 4 + 4 + 7;
         let out_size = data_offset + data.len() + 4;
         let mut out = vec![0u8; out_size];
@@ -158,6 +187,7 @@ impl AuthAES128 {
         let mut key = Vec::new();
         key.extend_from_slice(&self.server_info.iv);
         key.extend_from_slice(&self.server_info.key);
+        ssr_debug!("[pack_auth] iv={} key={}", hexs(&self.server_info.iv), hexs(&self.server_info.key));
 
         // Random padding
         use rand::RngCore;
@@ -185,8 +215,8 @@ impl AuthAES128 {
         let enc_key_input = format!("{}{}", user_key_b64, self.salt);
         let enc_key = bytes_to_key(enc_key_input.as_bytes(), 16);
 
-        // AES-128-CBC encrypt (only the 16-byte block at encrypt[4..20])
-        let encrypted = aes_128_cbc_encrypt(&enc_key, &encrypt[4..20]);
+        // AES-128-CBC encrypt (C encrypt.c:744 encrypts encrypt[0..16]: t+client_id+conn_id+sizes)
+        let encrypted = aes_128_cbc_encrypt(&enc_key, &encrypt[0..16]);
         encrypt[4..20].copy_from_slice(&encrypted[..16]);
         encrypt[0..4].copy_from_slice(&self.uid);
 

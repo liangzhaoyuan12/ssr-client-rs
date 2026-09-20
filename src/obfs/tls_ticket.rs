@@ -164,8 +164,8 @@ impl Tls12TicketAuthObfs {
         };
         ext_buf.extend_from_slice(&build_sni(host));
 
-        // Session ticket extension type (0x0017) + empty data
-        ext_buf.extend_from_slice(&[0x00, 0x17, 0x00, 0x00]);
+        // Session ticket extension (C tls_data2 = "\x00\x17\x00\x00\x00\x23")
+        ext_buf.extend_from_slice(&[0x00, 0x17, 0x00, 0x00, 0x00, 0x23]);
         // Session ticket data (random)
         let ticket_size: usize = (32 + rng.gen_range(0..164)) * 2;
         ext_buf.extend_from_slice(&(ticket_size as u16).to_be_bytes());
@@ -189,7 +189,8 @@ impl Tls12TicketAuthObfs {
         ext_buf.insert(0, (ext_len >> 8) as u8);
         ext_buf.insert(1, ext_len as u8);
 
-        // Cipher suites (from C code tls_data0)
+        // Cipher suites + compression methods (C code tls_data0, 32 bytes):
+        //   cipher_suites_len(2) + 28 suite bytes + compression_len(1) + null(1)
         let cipher_suites: Vec<u8> = vec![
             0x00, 0x1c, 0xc0, 0x2b, 0xc0, 0x2f, 0xcc, 0xa9, 0xcc, 0xa8,
             0xcc, 0x14, 0xcc, 0x13, 0xc0, 0x0a, 0xc0, 0x14, 0xc0, 0x09,
@@ -203,10 +204,7 @@ impl Tls12TicketAuthObfs {
         msg.extend_from_slice(&auth_data[..32]); // Random (auth data)
         msg.push(0x20); // Session ID length = 32
         msg.extend_from_slice(&self.client_id[..32]); // Session ID
-        msg.extend_from_slice(&(cipher_suites.len() as u16).to_be_bytes()); // Cipher suites length
-        msg.extend_from_slice(&cipher_suites);
-        msg.push(0x01); // Compression methods length
-        msg.push(0x00); // Null compression
+        msg.extend_from_slice(&cipher_suites); // tls_data0: suites + compression
         msg.extend_from_slice(&ext_buf);
 
         // Build final result by prepending headers (matching C code order):
@@ -220,12 +218,13 @@ impl Tls12TicketAuthObfs {
 
         // TLS record header
         result.extend_from_slice(&[0x16, 0x03, 0x01]);
-        // Handshake length
-        result.extend_from_slice(&((4 + msg.len()) as u16).to_be_bytes());
-        // ClientHello type
+        // TLS record length = payload length = type(2) + body_len(2) + version(2) + body
+        // C code: htons(buffer_get_length(result)) after inserting "\x01\x00", body_len, version
+        result.extend_from_slice(&((6 + msg.len()) as u16).to_be_bytes());
+        // ClientHello type + high byte of the 3-byte handshake length
         result.extend_from_slice(&[0x01, 0x00]);
-        // Body length
-        result.extend_from_slice(&(msg.len() as u16).to_be_bytes());
+        // Handshake length = version(2) + body
+        result.extend_from_slice(&((2 + msg.len()) as u16).to_be_bytes());
         // Client version
         result.extend_from_slice(&[0x03, 0x03]);
         // Body

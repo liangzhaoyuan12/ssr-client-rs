@@ -1,4 +1,7 @@
-/// SSR client configuration — caller constructs directly, no JSON parsing needed.
+/// SSR client configuration.
+///
+/// Construct directly, or load from an ssr-n style JSON file via
+/// [`crate::config_json::config_from_json`].
 #[derive(Debug, Clone)]
 pub struct SsrClientConfig {
     /// Remote server address
