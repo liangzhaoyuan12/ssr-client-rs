@@ -137,6 +137,39 @@ cipher 缺口分三类：
 5. **新增 `rc4-md5` / `rc4-md5-6`** 的 ctx 创建（`MD5(key ‖ iv)` 派生密钥，不再跳 IV），
    但实测仍不通，标记为待查。
 
+## 本轮（Session 5）AEAD 实现 —— 已实现，但端到端仍未互通
+
+**已完成**（`src/crypto/aead.rs`，5 个单元测试全过）：
+
+| 组件 | 状态 |
+|---|---|
+| HKDF-SHA1（extract + expand，`info="ss-subkey"`） | ✅ 用现有 `hmac_sha1` 手写，无需新依赖 |
+| 5 个 AEAD 密码（aes-128/192/256-gcm、chacha20-ietf-poly1305、xchacha20-ietf-poly1305） | ✅ |
+| 分帧 `[长度+tag][明文+tag]`，长度掩码 `0x3FFF` | ✅ |
+| nonce 从 0 起、每次 AEAD 操作按**小端**递增（每 chunk 两次） | ✅ |
+| 加/解密上下文（salt 随机生成、首包前缀；解密侧按需缓冲，支持 salt 与 chunk 被拆包） | ✅ |
+| 单测：5 种密码 roundtrip、逐字节投喂拆包、超 16383 字节自动分块、篡改 tag 必须报错 | ✅ 全过 |
+| 接入 `CipherEnv`（`EncryptContext::Aead` / `DecryptContext::Aead`） | ✅ |
+
+`aes-gcm 0.11` 只导出 128/256 的别名，AES-192 用 `AesGcm<Aes192, U12>` 自行定义。
+AEAD 走 `AeadInOut`（不是旧的 `Aead` trait）。
+
+**未解决**：真实互通仍失败，卡在 **obfs 握手**就断开
+（`Server closed connection during handshake`），还没进到 AEAD 分帧那一层。
+
+已排除的假设：
+- ❌ 不是 obfs key 用空还是用主密钥 —— 两种都试过，都是同样的失败
+- ❌ 不是分帧本身 —— 5 种密码的单测 roundtrip / 拆包 / 篡改检测全过
+
+关键线索：strace 抓 C 客户端（`aes-256-gcm` + `auth_aes128_sha1` + `tls1.2_ticket_auth`）
+对服务器的**第一次写只有 73 字节的随机数据**，并不是 `16 03 01 ...` 的 TLS ClientHello。
+也就是说 **AEAD 组合下 obfs 层的行为和流密码不一样** —— 可能根本没走 tls1.2_ticket_auth
+的 ClientHello 流程，或者写入顺序/首包内容不同。下一步应该从这个 73 字节入手反推，
+而不是继续调 AEAD 模块本身。
+
+> 生产配置 `aes-256-cfb + auth_aes128_sha1 + tls1.2_ticket_auth` 不受影响，回归验证全过
+> （真实服务器 httpbin 200 / github 200 / google 204，本地 ssr-server 200；183 个测试全过）。
+
 ## 后续可做（非阻塞）
 
 1. **UDP relay**（当前只实现 TCP；hk.json 里 `"udp": true` 未使用）

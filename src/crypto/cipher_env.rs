@@ -2,6 +2,7 @@ use crate::crypto::types::CipherType;
 use crate::error::SsrResult;
 use crate::crypto::bytes_to_key::bytes_to_key;
 use crate::crypto::table::TableCipher;
+use crate::crypto::aead::{AeadCipher, AeadDecryptCtx, AeadEncryptCtx};
 use cipher::{KeyIvInit, StreamCipher as _};
 
 // For stateful encryption, we use BufEncryptor/BufDecryptor which have &mut self methods
@@ -32,6 +33,9 @@ pub enum EncryptContext {
     DESCFB { cipher: DesCfbEnc },
     Salsa20 { cipher: salsa20::Salsa20 },
     ChaCha20 { cipher: chacha20::ChaCha20 },
+    /// AEAD streams replace the payload rather than transforming it in place,
+    /// so they are handled in `encrypt_ctx` before `encrypt_in_place` runs.
+    Aead(AeadEncryptCtx),
 }
 
 pub enum DecryptContext {
@@ -47,6 +51,7 @@ pub enum DecryptContext {
     DESCFB { cipher: DesCfbDec },
     Salsa20 { cipher: salsa20::Salsa20 },
     ChaCha20 { cipher: chacha20::ChaCha20 },
+    Aead(AeadDecryptCtx),
 }
 
 fn encrypt_in_place(ctx: &mut EncryptContext, output: &mut Vec<u8>) {
@@ -63,6 +68,9 @@ fn encrypt_in_place(ctx: &mut EncryptContext, output: &mut Vec<u8>) {
         EncryptContext::DESCFB { cipher } => { cipher.encrypt(output); }
         EncryptContext::Salsa20 { cipher } => { cipher.apply_keystream(output); }
         EncryptContext::ChaCha20 { cipher } => { cipher.apply_keystream(output); }
+        // Handled in `encrypt_ctx`: AEAD changes the length, so it cannot be
+        // transformed in place.
+        EncryptContext::Aead(_) => unreachable!("AEAD is handled in encrypt_ctx"),
     }
 }
 
@@ -80,15 +88,20 @@ fn decrypt_in_place(ctx: &mut DecryptContext, output: &mut Vec<u8>) {
         DecryptContext::DESCFB { cipher } => { cipher.decrypt(output); }
         DecryptContext::Salsa20 { cipher } => { cipher.apply_keystream(output); }
         DecryptContext::ChaCha20 { cipher } => { cipher.apply_keystream(output); }
+        DecryptContext::Aead(_) => unreachable!("AEAD is handled in decrypt_ctx"),
     }
 }
 
 pub struct CipherEnv {
     method: CipherType,
+    /// Cipher key reported to the obfs/protocol layers. For AEAD this is EMPTY:
+    /// the C `cipher_env_new_instance` never fills `env->enc_key` on that path.
     key: Vec<u8>,
     iv_len: usize,
     table_cipher: Option<TableCipher>,
     iv_cache: std::collections::HashSet<Vec<u8>>,
+    /// Master key used for AEAD HKDF subkey derivation (empty for stream ciphers).
+    aead_master_key: Vec<u8>,
 }
 
 impl CipherEnv {
@@ -99,15 +112,24 @@ impl CipherEnv {
 
     pub fn with_method(password: &str, method: CipherType) -> SsrResult<Self> {
         match method {
-            CipherType::None => Ok(Self { method, key: Vec::new(), iv_len: 0, table_cipher: None, iv_cache: Default::default() }),
+            CipherType::None => Ok(Self { method, key: Vec::new(), iv_len: 0, table_cipher: None, iv_cache: Default::default(), aead_master_key: Vec::new() }),
             CipherType::Table => {
                 let tc = TableCipher::new(password.as_bytes());
-                Ok(Self { method, key: password.as_bytes().to_vec(), iv_len: 0, table_cipher: Some(tc), iv_cache: Default::default() })
+                Ok(Self { method, key: password.as_bytes().to_vec(), iv_len: 0, table_cipher: Some(tc), iv_cache: Default::default(), aead_master_key: Vec::new() })
+            }
+            m if AeadCipher::is_aead(m) => {
+                // The C AEAD branch never populates env->enc_key, so
+                // enc_get_key_len()/enc_get_iv_len() report an empty key and a
+                // zero IV to the obfs and protocol layers. Keep the master key
+                // private to this module for HKDF.
+                let key_len = AeadCipher::key_len_of(m).expect("checked by is_aead");
+                let master = bytes_to_key(password.as_bytes(), key_len);
+                Ok(Self { method, key: Vec::new(), iv_len: 0, table_cipher: None, iv_cache: Default::default(), aead_master_key: master })
             }
             _ => {
                 let key = bytes_to_key(password.as_bytes(), method.key_size());
                 let iv_len = if method.need_iv() { method.iv_size() } else { 0 };
-                Ok(Self { method, key, iv_len, table_cipher: None, iv_cache: Default::default() })
+                Ok(Self { method, key, iv_len, table_cipher: None, iv_cache: Default::default(), aead_master_key: Vec::new() })
             }
         }
     }
@@ -121,6 +143,12 @@ impl CipherEnv {
     }
 
     pub fn create_encrypt_ctx(&self) -> SsrResult<(EncryptContext, Vec<u8>)> {
+        if AeadCipher::is_aead(self.method) {
+            // The AEAD context emits and manages its own salt, and the C code
+            // reports an empty IV to the obfs/protocol layers for AEAD.
+            let ctx = AeadEncryptCtx::new(self.method, &self.aead_master_key)?;
+            return Ok((EncryptContext::Aead(ctx), Vec::new()));
+        }
         let iv_len = self.iv_len;
         let mut iv = vec![0u8; iv_len];
         if iv_len > 0 { rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut iv); }
@@ -167,12 +195,22 @@ impl CipherEnv {
     }
 
     pub fn encrypt_ctx(&self, ctx: &mut EncryptContext, plaintext: &[u8], _is_first: bool) -> SsrResult<Vec<u8>> {
+        if let EncryptContext::Aead(a) = ctx {
+            return a.encrypt(plaintext);
+        }
         let mut output = plaintext.to_vec();
         encrypt_in_place(ctx, &mut output);
         Ok(output)
     }
 
     pub fn create_decrypt_ctx_from_ciphertext(&self, ciphertext: &[u8]) -> SsrResult<(DecryptContext, Vec<u8>)> {
+        if AeadCipher::is_aead(self.method) {
+            // No IV is consumed up front: the AEAD decryptor buffers until the
+            // salt arrives (it may be split across packets) and returns all the
+            // data untouched so `decrypt_ctx` can consume it.
+            let ctx = AeadDecryptCtx::new(self.method, &self.aead_master_key)?;
+            return Ok((DecryptContext::Aead(ctx), ciphertext.to_vec()));
+        }
         let iv_len = self.iv_len;
         if iv_len > 0 {
             if ciphertext.len() < iv_len { return Err(crate::error::SsrError::crypto(format!("Ciphertext too short for IV"))); }
@@ -221,6 +259,9 @@ impl CipherEnv {
     }
 
     pub fn decrypt_ctx(&self, ctx: &mut DecryptContext, ciphertext: &[u8]) -> SsrResult<Vec<u8>> {
+        if let DecryptContext::Aead(d) = ctx {
+            return d.decrypt(ciphertext);
+        }
         let mut output = ciphertext.to_vec();
         decrypt_in_place(ctx, &mut output);
         Ok(output)
