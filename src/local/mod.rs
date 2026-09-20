@@ -1,0 +1,609 @@
+/// Local SOCKS5 proxy server and SSR client orchestrator.
+///
+/// The SsrClient:
+/// 1. Starts a local TCP listener (SOCKS5 server)
+/// 2. Accepts incoming SOCKS5 connections
+/// 3. Performs SOCKS5 handshake (method negotiation + CONNECT)
+/// 4. Establishes a tunnel to the remote SSR server
+/// 5. Relays traffic through the tunnel
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Notify;
+
+use crate::config::SsrClientConfig;
+use crate::error::{SsrError, SsrResult};
+use crate::relay::TcpRelay;
+use crate::socks5::{
+    self, build_address_package, build_method_response, build_success_reply, parse_connect_request,
+    parse_method_negotiation, ATYP_IPV4, AUTH_NONE, CMD_CONNECT,
+};
+
+/// Local SOCKS5 proxy server that tunnels connections through SSR.
+#[derive(Clone)]
+pub struct SsrClient {
+    config: SsrClientConfig,
+    running: Arc<AtomicBool>,
+    shutdown: Arc<Notify>,
+}
+
+impl SsrClient {
+    /// Create a new SSR client with the given configuration.
+    pub fn new(config: SsrClientConfig) -> Self {
+        Self {
+            config,
+            running: Arc::new(AtomicBool::new(false)),
+            shutdown: Arc::new(Notify::new()),
+        }
+    }
+
+    /// Start the SOCKS5 proxy server.
+    ///
+    /// Binds to the configured listen address and port, then accepts
+    /// connections in a loop. Each connection is handled in a new tokio task.
+    ///
+    /// This method runs until `stop()` is called.
+    pub async fn start(&self) -> SsrResult<()> {
+        let addr = format!("{}:{}", self.config.listen_address, self.config.listen_port);
+        let listener = TcpListener::bind(&addr).await.map_err(|e| {
+            SsrError::Connection(format!("Failed to bind SOCKS5 server on {addr}: {e}"))
+        })?;
+
+        self.running.store(true, Ordering::SeqCst);
+
+        log::info!("SOCKS5 server listening on {addr}");
+
+        loop {
+            tokio::select! {
+                accept_result = listener.accept() => {
+                    match accept_result {
+                        Ok((stream, peer_addr)) => {
+                            log::debug!("New connection from {peer_addr}");
+                            let config = self.config.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = handle_connection(stream, &config).await {
+                                    log::debug!("Connection from {peer_addr} error: {e}");
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            log::error!("Accept error: {e}");
+                        }
+                    }
+                }
+                _ = self.shutdown.notified() => {
+                    log::info!("SOCKS5 server shutting down");
+                    break;
+                }
+            }
+        }
+
+        self.running.store(false, Ordering::SeqCst);
+        log::info!("SOCKS5 server stopped");
+        Ok(())
+    }
+
+    /// Stop the SOCKS5 proxy server.
+    pub fn stop(&self) {
+        self.running.store(false, Ordering::SeqCst);
+        self.shutdown.notify_waiters();
+    }
+
+    /// Check if the server is running.
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
+
+    /// Get a reference to the configuration.
+    pub fn config(&self) -> &SsrClientConfig {
+        &self.config
+    }
+}
+
+/// Obfs-aware TCP relay that handles obfs encode/decode.
+///
+/// Wraps upstream data with obfs encode before sending to server,
+/// and unwraps downstream data with obfs decode before sending to client.
+/// Uses a single obfs instance shared between handshake and relay.
+/// Also handles protocol framing and cipher encryption/decryption.
+struct ObfsRelay {
+    local_read: tokio::net::tcp::OwnedReadHalf,
+    local_write: tokio::net::tcp::OwnedWriteHalf,
+    remote_read: tokio::net::tcp::OwnedReadHalf,
+    remote_write: tokio::net::tcp::OwnedWriteHalf,
+    obfs: Box<dyn crate::obfs::Obfs>,
+    cipher_env: crate::crypto::cipher_env::CipherEnv,
+    protocol: crate::protocol::auth_aes128::AuthAES128,
+    encrypt_ctx: crate::crypto::cipher_env::EncryptContext,
+    decrypt_ctx: Option<crate::crypto::cipher_env::DecryptContext>,
+    cipher_iv: Vec<u8>,
+    first_encrypt: bool,
+    addr_pkg: Vec<u8>,
+    addr_sent: bool,
+    buffer_size: usize,
+}
+
+impl ObfsRelay {
+    /// Create a new ObfsRelay with a shared obfs instance.
+    fn new(
+        local: TcpStream,
+        remote: TcpStream,
+        obfs: Box<dyn crate::obfs::Obfs>,
+        cipher_env: crate::crypto::cipher_env::CipherEnv,
+        protocol: crate::protocol::auth_aes128::AuthAES128,
+        addr_pkg: Vec<u8>,
+    ) -> Self {
+        let (local_read, local_write) = local.into_split();
+        let (remote_read, remote_write) = remote.into_split();
+
+        // Create the stateful encrypt context (generates random IV)
+        let (encrypt_ctx, iv) = cipher_env.create_encrypt_ctx()
+            .expect("Failed to create encrypt context");
+        
+        Self {
+            local_read,
+            local_write,
+            remote_read,
+            remote_write,
+            obfs,
+            cipher_env,
+            protocol,
+            encrypt_ctx,
+            decrypt_ctx: None,
+            cipher_iv: iv,
+            first_encrypt: true,
+            addr_pkg,
+            addr_sent: false,
+            buffer_size: 8192,
+        }
+    }
+
+    /// Run the obfs-aware relay.
+    ///
+    /// First sends the address package (protocol→cipher→obfs),
+    /// which triggers the obfs layer to generate CCS+Finished.
+    /// Then streams remaining data from client.
+    async fn run(mut self) -> SsrResult<(u64, u64)> {
+        use crate::protocol::Protocol;
+
+        let mut total_up = 0u64;
+        let mut total_down = 0u64;
+
+        let mut local_buf = vec![0u8; self.buffer_size];
+        let mut remote_buf = vec![0u8; self.buffer_size];
+
+        // Step 1: Send address package as first upstream data
+        // This triggers obfs to generate CCS+Finished + pack_data(address)
+        if !self.addr_pkg.is_empty() {
+            eprintln!("[relay] Sending address package: {} bytes", self.addr_pkg.len());
+            let framed = self.protocol.client_pre_encrypt(&self.addr_pkg)?;
+            eprintln!("[relay] Address framed: {} bytes", framed.len());
+            let mut encrypted = self.cipher_env.encrypt_ctx(&mut self.encrypt_ctx, &framed, self.first_encrypt)?;
+            if self.first_encrypt {
+                let mut with_iv = Vec::with_capacity(self.cipher_iv.len() + encrypted.len());
+                with_iv.extend_from_slice(&self.cipher_iv);
+                with_iv.extend_from_slice(&encrypted);
+                encrypted = with_iv;
+                self.first_encrypt = false;
+            }
+            let encoded = self.obfs.client_encode(&encrypted)?;
+            eprintln!("[relay] Address obfs encoded: {} bytes", encoded.len());
+            eprintln!("[relay] First 100 bytes: {}", encoded.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" "));
+            self.remote_write.write_all(&encoded).await?;
+            self.addr_sent = true;
+            total_up += self.addr_pkg.len() as u64;
+
+            // Read server feedback after sending address
+            // The server should respond with feedback after CCS+Finished
+            let n = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                self.remote_read.read(&mut remote_buf),
+            ).await;
+            match n {
+                Ok(Ok(0)) => {
+                    eprintln!("[relay] Server closed after address");
+                }
+                Ok(Ok(n)) => {
+                    eprintln!("[relay] Server feedback: {} bytes", n);
+                    // Process server feedback (obfs decode, cipher decrypt, protocol post_decrypt)
+                    let (decrypted_obfs, _needs_feedback) = self.obfs.client_decode(&remote_buf[..n])?;
+                    if !decrypted_obfs.is_empty() {
+                        let decrypted_cipher = if let Some(ref mut dctx) = self.decrypt_ctx {
+                            self.cipher_env.decrypt_ctx(dctx, &decrypted_obfs)?
+                        } else {
+                            let (dctx, data) = self.cipher_env.create_decrypt_ctx_from_ciphertext(&decrypted_obfs)?;
+                            self.decrypt_ctx = Some(dctx);
+                            self.cipher_env.decrypt_ctx(self.decrypt_ctx.as_mut().unwrap(), &data)?
+                        };
+                        let decoded = self.protocol.client_post_decrypt(&decrypted_cipher)?;
+                        if !decoded.is_empty() {
+                            self.local_write.write_all(&decoded).await?;
+                        }
+                    }
+                    total_down += n as u64;
+                }
+                _ => {
+                    eprintln!("[relay] Server feedback timeout/error");
+                }
+            }
+        }
+
+        eprintln!("[relay] Starting streaming relay loop");
+        loop {
+            tokio::select! {
+                result = self.local_read.read(&mut local_buf) => {
+                    match result {
+                        Ok(0) => {
+                            eprintln!("[relay] EOF from client");
+                            break;
+                        }
+                        Ok(n) => {
+                            eprintln!("[relay] Upstream: {} bytes from client", n);
+                            // Protocol: frame the data
+                            let framed = self.protocol.client_pre_encrypt(&local_buf[..n])?;
+                            eprintln!("[relay] Protocol framed: {} bytes", framed.len());
+                            // Stateful cipher: encrypt with stream state
+                            let mut encrypted = self.cipher_env.encrypt_ctx(&mut self.encrypt_ctx, &framed, false)?;
+                            eprintln!("[relay] Encrypted: {} bytes", encrypted.len());
+                            // Obfs: wrap in TLS record
+                            let encoded = self.obfs.client_encode(&encrypted)?;
+                            eprintln!("[relay] Obfs encoded: {} bytes", encoded.len());
+                            self.remote_write.write_all(&encoded).await?;
+                            total_up += n as u64;
+                        }
+                        Err(e) => {
+                            eprintln!("[relay] Upstream read error: {e}");
+                            break;
+                        }
+                    }
+                }
+                result = self.remote_read.read(&mut remote_buf) => {
+                    match result {
+                        Ok(0) => {
+                            eprintln!("[relay] EOF from server");
+                            break;
+                        }
+                        Ok(n) => {
+                            eprintln!("[relay] Downstream: {} bytes from server", n);
+                            // Obfs: unwrap TLS record
+                            let (decrypted_obfs, _needs_feedback) = self.obfs.client_decode(&remote_buf[..n])?;
+                            eprintln!("[relay] Obfs decoded: {} bytes", decrypted_obfs.len());
+                            if decrypted_obfs.is_empty() {
+                                continue;
+                            }
+                            // Stateful cipher: decrypt with stream state
+                            let decrypted_cipher = if let Some(ref mut dctx) = self.decrypt_ctx {
+                                // Subsequent messages: no IV prefix, use existing state
+                                self.cipher_env.decrypt_ctx(dctx, &decrypted_obfs)?
+                            } else {
+                                // First message: read IV from ciphertext, create context
+                                let (dctx, data) = self.cipher_env.create_decrypt_ctx_from_ciphertext(&decrypted_obfs)?;
+                                self.decrypt_ctx = Some(dctx);
+                                self.cipher_env.decrypt_ctx(self.decrypt_ctx.as_mut().unwrap(), &data)?
+                            };
+                            eprintln!("[relay] Decrypted: {} bytes", decrypted_cipher.len());
+                            // Protocol: unwrap framing
+                            let decoded = self.protocol.client_post_decrypt(&decrypted_cipher)?;
+                            eprintln!("[relay] Protocol decoded: {} bytes", decoded.len());
+                            if !decoded.is_empty() {
+                                self.local_write.write_all(&decoded).await?;
+                            }
+                            total_down += n as u64;
+                        }
+                        Err(e) => {
+                            eprintln!("[relay] Downstream read error: {e}");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok((total_up, total_down))
+    }
+}
+
+/// Handle a single SOCKS5 connection.
+///
+/// Performs the full SOCKS5 handshake, establishes a tunnel to the
+/// configured SSR server (including the obfs handshake), then relays
+/// data through the tunnel.
+async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> SsrResult<()> {
+    // Step 1: Method negotiation
+    let method_req = read_method_negotiation(&mut stream).await?;
+    let selected = select_method(&method_req.methods)?;
+    stream
+        .write_all(&build_method_response(selected))
+        .await?;
+
+    // Step 2: Connect request
+    let connect_req = read_connect_request(&mut stream).await?;
+
+    if connect_req.cmd != CMD_CONNECT {
+        stream
+            .write_all(&socks5::build_connect_reply(
+                socks5::REP_COMMAND_NOT_SUPPORTED,
+                ATYP_IPV4,
+                &[0, 0, 0, 0],
+                0,
+            ))
+            .await?;
+        return Err(SsrError::socks5(format!(
+            "Unsupported SOCKS5 command: 0x{:02x}",
+            connect_req.cmd
+        )));
+    }
+
+    // Step 3: Establish tunnel to remote SSR server
+    eprintln!("[conn] CONNECT {}:{}", connect_req.addr.display(), connect_req.port);
+
+    let mut remote_stream = connect_to_ssr_server(config).await?;
+    eprintln!("[conn] Connected to SSR server");
+
+    // Create cipher and obfs instances
+    use crate::crypto::cipher_env::CipherEnv;
+    let env = CipherEnv::new(&config.password, &config.method)?;
+    let mut obfs_inst = crate::obfs::create_obfs(
+        &config.obfs,
+        &config.server,
+        config.server_port,
+        &config.obfs_param,
+    )
+    .ok_or_else(|| SsrError::Obfs(format!("Unsupported obfs: {}", config.obfs)))?;
+    obfs_inst.set_key(env.key().to_vec());
+    eprintln!("[conn] Created obfs instance");
+
+    // Step 4: Perform obfs handshake (ClientHello → server response → Finished+AppData)
+    eprintln!("[conn] Starting obfs handshake");
+    match perform_obfs_handshake(&mut remote_stream, &mut obfs_inst).await {
+        Ok(()) => eprintln!("[conn] Obfs handshake completed"),
+        Err(e) => {
+            eprintln!("[conn] Obfs handshake failed: {e}");
+            return Err(e);
+        }
+    }
+
+    // Step 5: Send SOCKS5 success reply to client
+    let reply = build_success_reply(connect_req.addr.atyp());
+    stream.write_all(&reply).await?;
+    eprintln!("[conn] Sent SOCKS5 success reply");
+
+    // Step 5.5: Build address package (ATYP + addr + port) for SSR protocol
+    // The SSR protocol expects the address as the first data payload
+    let addr_pkg = build_address_package(&connect_req.addr, connect_req.port);
+    eprintln!("[conn] Address package: {} bytes", addr_pkg.len());
+
+    // Step 6: Relay data between client and SSR server (with obfs encode/decode)
+    use crate::protocol::auth_aes128::AuthAES128;
+    use crate::protocol::{Protocol, ServerInfo};
+    let mut protocol = AuthAES128::new_md5(ServerInfo {
+        key: env.key().to_vec(),
+        iv: vec![0u8; 16],
+        ..Default::default()
+    });
+    protocol.init_user_key();
+
+    eprintln!("[conn] Starting obfs relay");
+    let relay = ObfsRelay::new(stream, remote_stream, obfs_inst, env, protocol, addr_pkg);
+    let (up, down) = relay.run().await?;
+
+    eprintln!("[conn] Relay finished: upstream={up}, downstream={down}");
+    Ok(())
+}
+
+/// Read and parse the SOCKS5 method negotiation from the client.
+async fn read_method_negotiation(stream: &mut TcpStream) -> SsrResult<socks5::MethodNegotiation> {
+    // SOCKS5 greeting: [version, nmethods, methods...]
+    // nmethods is at most 255, so we read at most 257 bytes
+    let mut buf = vec![0u8; 257];
+    let n = stream
+        .read(&mut buf)
+        .await
+        .map_err(|e| SsrError::Socks5(format!("Failed to read method negotiation: {e}")))?;
+
+    if n == 0 {
+        return Err(SsrError::socks5("Client closed connection during handshake"));
+    }
+
+    parse_method_negotiation(&buf[..n])
+}
+
+/// Read and parse the SOCKS5 CONNECT request from the client.
+async fn read_connect_request(stream: &mut TcpStream) -> SsrResult<socks5::ConnectRequest> {
+    // Max SOCKS5 request: version(1) + cmd(1) + rsv(1) + atyp(1) + domain_len(1) + domain(255) + port(2) = 262
+    let mut buf = vec![0u8; 262];
+    let n = stream
+        .read(&mut buf)
+        .await
+        .map_err(|e| SsrError::Socks5(format!("Failed to read CONNECT request: {e}")))?;
+
+    if n == 0 {
+        return Err(SsrError::socks5("Client closed connection during CONNECT"));
+    }
+
+    eprintln!("[socks5] Raw CONNECT: {} bytes: {}", n, buf[..n].iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" "));
+
+    parse_connect_request(&buf[..n])
+}
+
+/// Select an authentication method from the client's offered methods.
+///
+/// Currently only supports NO AUTH (0x00).
+fn select_method(offered: &[u8]) -> SsrResult<u8> {
+    if offered.contains(&AUTH_NONE) {
+        Ok(AUTH_NONE)
+    } else {
+        Err(SsrError::socks5(
+            "Client does not support NO AUTH method",
+        ))
+    }
+}
+
+/// Perform the obfs handshake with the SSR server.
+///
+/// Sends ClientHello, reads server response, processes it.
+/// Does NOT send Finished+AppData — the relay will send it with real data.
+async fn perform_obfs_handshake(
+    remote: &mut TcpStream,
+    obfs_inst: &mut Box<dyn crate::obfs::Obfs>,
+) -> SsrResult<()> {
+    use std::time::Duration;
+
+    // Generate ClientHello (empty buffer call to avoid dummy data)
+    let client_hello = obfs_inst.client_encode(&[])?;
+
+    // Send ClientHello
+    remote.write_all(&client_hello).await?;
+    eprintln!("[obfs] Sent ClientHello: {} bytes", client_hello.len());
+
+    // Read server response with timeout
+    let mut buf = vec![0u8; 8192];
+    let n = tokio::time::timeout(
+        Duration::from_secs(10),
+        remote.read(&mut buf),
+    )
+    .await
+    .map_err(|_| SsrError::Connection("Timeout reading server response".to_string()))?
+    ?;
+    if n == 0 {
+        return Err(SsrError::Connection("Server closed connection during handshake".to_string()));
+    }
+    eprintln!("[obfs] Received server response: {} bytes", n);
+
+    // Process server response
+    let (_decoded, needs_feedback) = obfs_inst.client_decode(&buf[..n])?;
+    eprintln!("[obfs] Needs feedback: {}", needs_feedback);
+
+    // NOTE: We do NOT send the Finished+AppData here.
+    // The relay will send it with the first real data from the SOCKS5 client.
+    // This ensures the Finished is followed by real Application Data.
+
+    Ok(())
+}
+async fn connect_to_ssr_server(config: &SsrClientConfig) -> SsrResult<TcpStream> {
+    let addr = format!("{}:{}", config.server, config.server_port);
+
+    let stream = tokio::time::timeout(
+        std::time::Duration::from_secs(config.connect_timeout as u64),
+        TcpStream::connect(&addr),
+    )
+    .await
+    .map_err(|_| {
+        SsrError::Connection(format!(
+            "Timeout connecting to SSR server {addr} ({}s)",
+            config.connect_timeout
+        ))
+    })?
+    .map_err(|e| SsrError::Connection(format!("Failed to connect to SSR server {addr}: {e}")))?;
+
+    log::debug!("Connected to SSR server at {addr}");
+    Ok(stream)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::SsrClientConfig;
+
+    #[test]
+    fn test_ssr_client_new() {
+        let config = SsrClientConfig::new(
+            "127.0.0.1",
+            8388,
+            "password",
+            "aes-256-cfb",
+            "auth_aes128_sha1",
+            "tls1.2_ticket_auth",
+        );
+        let client = SsrClient::new(config);
+        assert!(!client.is_running());
+        assert_eq!(client.config().server, "127.0.0.1");
+        assert_eq!(client.config().server_port, 8388);
+    }
+
+    #[test]
+    fn test_ssr_client_stop() {
+        let config = SsrClientConfig::new(
+            "127.0.0.1",
+            8388,
+            "password",
+            "aes-256-cfb",
+            "origin",
+            "plain",
+        );
+        let client = SsrClient::new(config);
+        assert!(!client.is_running());
+        client.stop();
+        assert!(!client.is_running());
+    }
+
+    #[test]
+    fn test_select_method_with_no_auth() {
+        let methods = vec![0x00, 0x01, 0x02];
+        assert_eq!(select_method(&methods).unwrap(), AUTH_NONE);
+    }
+
+    #[test]
+    fn test_select_method_no_auth_only() {
+        let methods = vec![0x00];
+        assert_eq!(select_method(&methods).unwrap(), AUTH_NONE);
+    }
+
+    #[test]
+    fn test_select_method_rejects_when_no_auth_not_offered() {
+        let methods = vec![0x01, 0x02];
+        let result = select_method(&methods);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_select_method_empty_list() {
+        let methods: Vec<u8> = vec![];
+        let result = select_method(&methods);
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_ssr_client_start_and_stop() {
+        let config = SsrClientConfig::new(
+            "127.0.0.1",
+            19876,
+            "password",
+            "aes-256-cfb",
+            "origin",
+            "plain",
+        );
+        let client = SsrClient::new(config);
+
+        let client_ref = client.clone();
+        let handle = tokio::spawn(async move { client.start().await });
+
+        // Wait briefly for server to start
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Stop
+        client_ref.stop();
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Handle should complete without error
+        let result = handle.await.unwrap();
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_connect_to_ssr_server_refused() {
+        let config = SsrClientConfig::new(
+            "127.0.0.1",
+            19999, // Nothing listening
+            "password",
+            "none",
+            "origin",
+            "plain",
+        );
+        let result = connect_to_ssr_server(&config).await;
+        assert!(result.is_err());
+    }
+}

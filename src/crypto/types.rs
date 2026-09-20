@@ -121,7 +121,7 @@ impl CipherType {
             Self::RC2CFB => 8,
             Self::SeedCFB => 16,
             Self::Salsa20 => 8,
-            Self::ChaCha20 => 8,
+            Self::ChaCha20 => 8, // SSR original ChaCha20 uses 8-byte IV; padded to 12 for crate
             Self::ChaCha20IETF => 12,
             // AEAD: IV is handled differently (nonce)
             Self::AES128GCM | Self::AES192GCM | Self::AES256GCM => 0,

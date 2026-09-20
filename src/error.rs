@@ -41,6 +41,10 @@ pub enum SsrError {
     #[error("Invalid argument: {0}")]
     InvalidArgument(String),
 
+    /// Obfs error
+    #[error("Obfs error: {0}")]
+    Obfs(String),
+
     /// Generic error
     #[error("{0}")]
     Other(String),

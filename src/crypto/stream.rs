@@ -103,7 +103,15 @@ pub fn stream_encrypt(
             Ok(output)
         }
         CipherType::ChaCha20 => {
-            let mut cipher = <chacha20::ChaCha20 as cipher::KeyIvInit>::new_from_slices(key, iv)
+            // SSR original ChaCha20 uses 8-byte IV; chacha20 crate expects 12-byte nonce
+            let padded_iv = if iv.len() == 8 {
+                let mut v = [0u8; 12];
+                v[..8].copy_from_slice(iv);
+                v.to_vec()
+            } else {
+                iv.to_vec()
+            };
+            let mut cipher = <chacha20::ChaCha20 as cipher::KeyIvInit>::new_from_slices(key, &padded_iv)
                 .map_err(|e| SsrError::crypto(format!("ChaCha20 init: {e}")))?;
             let mut output = plaintext.to_vec();
             cipher.apply_keystream(&mut output);
@@ -210,7 +218,15 @@ pub fn stream_decrypt(
             Ok(output)
         }
         CipherType::ChaCha20 => {
-            let mut cipher = <chacha20::ChaCha20 as cipher::KeyIvInit>::new_from_slices(key, iv)
+            // SSR original ChaCha20 uses 8-byte IV; chacha20 crate expects 12-byte nonce
+            let padded_iv = if iv.len() == 8 {
+                let mut v = [0u8; 12];
+                v[..8].copy_from_slice(iv);
+                v.to_vec()
+            } else {
+                iv.to_vec()
+            };
+            let mut cipher = <chacha20::ChaCha20 as cipher::KeyIvInit>::new_from_slices(key, &padded_iv)
                 .map_err(|e| SsrError::crypto(format!("ChaCha20 init: {e}")))?;
             let mut output = ciphertext.to_vec();
             cipher.apply_keystream(&mut output);
@@ -278,7 +294,7 @@ mod tests {
     #[test]
     fn test_blowfish_cfb_roundtrip() {
         let key = [0x42u8; 16];
-        let iv = [0x24u8; 12];
+        let iv = [0x24u8; 8];
         let data = b"hello blowfish";
         let encrypted = stream_encrypt(CipherType::BFCFB, &key, &iv, data).unwrap();
         let decrypted = stream_decrypt(CipherType::BFCFB, &key, &iv, &encrypted).unwrap();
