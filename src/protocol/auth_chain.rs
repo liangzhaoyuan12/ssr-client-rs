@@ -1,9 +1,10 @@
 use crate::error::SsrResult;
 use crate::utils::hash::{hmac_md5, md5};
-use crate::crypto::stream::{stream_encrypt, stream_decrypt};
+use crate::crypto::bytes_to_key::bytes_to_key;
 use crate::crypto::types::CipherType;
 use crate::utils::base64::b64encode;
 use super::{Protocol, GlobalData, ServerInfo, memintcopy_lt, XorShift128Plus};
+use cipher::{KeyInit, StreamCipher as _};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const SSR_BUFF_SIZE: usize = 2048;
@@ -74,8 +75,8 @@ struct AuthChainAContext {
     random_client: Shift128plusCtx,
     random_server: Shift128plusCtx,
     cipher_type: CipherType,
-    encrypt_ctx: Option<Vec<u8>>, // RC4 keystream state (simplified)
-    decrypt_ctx: Option<Vec<u8>>,
+    encrypt_ctx: Option<rc4::Rc4>, // RC4 stateful cipher (encrypt direction)
+    decrypt_ctx: Option<rc4::Rc4>, // RC4 stateful cipher (decrypt direction)
     unit_len: usize,
     max_time_dif: i64,
     client_id: u32,
@@ -198,29 +199,36 @@ impl AuthChainA {
     }
 
     fn init_rc4(&mut self, password: &str) {
-        // Create RC4 encrypt/decrypt contexts
-        // For simplicity, we store the password and use it to generate keystream on demand
-        let mut enc_data = Vec::new();
-        enc_data.extend_from_slice(password.as_bytes());
-        self.local.encrypt_ctx = Some(enc_data.clone());
-        self.local.decrypt_ctx = Some(enc_data);
+        // Derive RC4 key using EVP_BytesToKey (same as cipher_env_new_instance)
+        let key = bytes_to_key(password.as_bytes(), 16); // RC4 key size is 16
+        let enc = <rc4::Rc4 as KeyInit>::new_from_slice(&key)
+            .expect("RC4 key init should not fail");
+        let dec = <rc4::Rc4 as KeyInit>::new_from_slice(&key)
+            .expect("RC4 key init should not fail");
+        self.local.encrypt_ctx = Some(enc);
+        self.local.decrypt_ctx = Some(dec);
     }
 
-    fn encrypt_buffer(&self, data: &[u8]) -> Vec<u8> {
-        // Simplified RC4: use XOR with derived key
-        // In real implementation, this would be stateful RC4
+    fn encrypt_buffer(&mut self, data: &[u8]) -> Vec<u8> {
         if data.is_empty() {
             return Vec::new();
         }
-        // For auth_chain, we use RC4 with the password
-        // Simplified: just return data (RC4 is symmetric)
-        // Real implementation needs stateful RC4
-        data.to_vec()
+        let mut output = data.to_vec();
+        if let Some(ref mut cipher) = self.local.encrypt_ctx {
+            cipher.apply_keystream(&mut output);
+        }
+        output
     }
 
-    fn decrypt_buffer(&self, data: &[u8]) -> Vec<u8> {
-        // Simplified RC4 decrypt
-        data.to_vec()
+    fn decrypt_buffer(&mut self, data: &[u8]) -> Vec<u8> {
+        if data.is_empty() {
+            return Vec::new();
+        }
+        let mut output = data.to_vec();
+        if let Some(ref mut cipher) = self.local.decrypt_ctx {
+            cipher.apply_keystream(&mut output);
+        }
+        output
     }
 
     fn pack_client_data(&mut self, data: &[u8]) -> Vec<u8> {
@@ -416,8 +424,9 @@ impl AuthChainA {
                 2
             };
 
-            // Decrypt
-            let decrypted = self.decrypt_buffer(&self.local.recv_buffer[pos..pos + data_len]);
+            // Decrypt (copy slice first to avoid borrow conflict)
+            let encrypted_slice = self.local.recv_buffer[pos..pos + data_len].to_vec();
+            let decrypted = self.decrypt_buffer(&encrypted_slice);
 
             // First packet: extract tcp_mss
             if self.local.recv_id == 1 && decrypted.len() >= 2 {

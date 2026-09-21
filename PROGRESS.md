@@ -17,36 +17,19 @@
 - AEAD 本地测试通过: aes-256-gcm + plain + origin → HTTP 200
 - EOF drain 修复 + 跳过 feedback 等待
 
-### 🔧 Phase 7: 协议扩展 (进行中)
-- 所有协议已注册到选择器 (auth_sha1_v4, auth_sha1_v2, auth_sha1, auth_simple, auth_chain_a-f)
-- auth_sha1_v4 修复:
-  - data_offset = rand_len + 6 (之前错误)
-  - CRC32 是 4 字节 LE (之前只有 2 字节)
-  - HMAC key 填充到 80 字节匹配 C 的 ss_sha1_hmac
-  - pack_data 不填充随机数据 (C 代码也不填充)
-  - client_post_decrypt data_start 修正
-- **auth_sha1_v4 端到端仍失败**: 服务端拒绝数据包
-  - 单测 roundtrip 通过, 但与 C 服务端不互通
-  - 可能原因: CRC32 计算差异 / HMAC 数据范围差异 / recv_iv 使用差异
+### ✅ auth_sha1_v4 端到端 (commits 4138f7b + a8b269e)
+- **根因1**: set_server_iv 对所有 auth 协议是 no-op → HMAC key 使用 zeros(16)+key(32) 而非 cipher_iv(16)+key(32)
+- **根因2**: ss_hmac_key 返回 80 字节但 C 只用 iv_len+key_len=48 字节
+- **根因3**: client_post_decrypt 错误处理 auth header — 客户端只收到 pack_data，不收 pack_auth_data
+- **根因4**: get_rand_len 对 >1300 返回 0，C 始终 ≥ 1
+- E2e 验证: auth_sha1_v4 + plain + aes-256-cfb → HTTP 200
+- 所有 183 测试通过 (122 lib + 46 full_coverage + 15 hk_integration)
+
+### 🔧 auth_chain_a 端到端 (进行中)
+- 服务端拒绝数据包 — 原因: encrypt_buffer/decrypt_buffer 是空操作
+- RC4 加密未实现 — auth_chain_a 使用独立的 RC4 密码上下文
+- 需要实现: stateful RC4 加密/解密 + AES-128-CBC 认证头
 
 ### 未开始
-- auth_chain_a-f 端到端测试
+- auth_chain_b-f 端到端测试
 - UDP relay
-
-## 关键架构理解
-
-### AEAD 降级 (ssr_executive.c:175-179)
-AEAD 密码自动切换: obfs→plain, protocol→origin. 直接 salt(32)+AEAD(data).
-
-### HMAC Key 填充 (obfsutil.c:64-80)
-C 的 ss_sha1_hmac 分配 80 字节: [iv(16)][key(N)][zeros(64-N)]
-
-### auth_sha1_v4 数据格式
-```
-[len(2)][CRC32(4)][zeros(2)][rand_len(1|3)][gap(zeros)][timestamp(4)][client_id(4)][conn_id(4)][data][HMAC(10)]
-```
-
-## 测试结果
-- 122 lib 单测通过 (无回归)
-- AEAD 端到端: ✅ httpbin 200 / github 301
-- auth_sha1_v4 端到端: ❌ 服务端拒绝
