@@ -183,33 +183,65 @@ impl Protocol for AuthSHA1V4 {
         }
 
         while self.recv_buffer.len() > 4 {
-            let crc_val = crc32(&self.recv_buffer[0..2]);
-            let crc_stored = (self.recv_buffer[2] as u32) | ((self.recv_buffer[3] as u32) << 8);
-            if (crc_val & 0xFFFF) != crc_stored {
+            // Try auth packet CRC first: crc32(buffer[0..2] + salt + key)
+            let mut crc_src = Vec::new();
+            crc_src.extend_from_slice(&self.recv_buffer[0..2]);
+            crc_src.extend_from_slice(b"auth_sha1_v4");
+            crc_src.extend_from_slice(&self.server_info.key);
+            let crc_auth = crc32(&crc_src);
+            let crc_stock4 = (self.recv_buffer[2] as u32)
+                | ((self.recv_buffer[3] as u32) << 8)
+                | ((self.recv_buffer[4] as u32) << 16)
+                | ((self.recv_buffer[5] as u32) << 24);
+
+            // Try data packet CRC: crc32(buffer[0..2])
+            let crc_data = crc32(&self.recv_buffer[0..2]);
+            let crc_stock2 = (self.recv_buffer[2] as u32) | ((self.recv_buffer[3] as u32) << 8);
+
+            let is_auth_packet = crc_auth == crc_stock4;
+
+            if !is_auth_packet && (crc_data & 0xFFFF) != crc_stock2 {
                 self.recv_buffer.clear();
-                return Err(crate::error::SsrError::Protocol("auth_sha1_v4: CRC mismatch".into()));
+                break;
             }
             let length = ((self.recv_buffer[0] as usize) << 8) | self.recv_buffer[1] as usize;
             if length >= 8192 || length < 7 {
                 self.recv_buffer.clear();
-                return Err(crate::error::SsrError::Protocol("auth_sha1_v4: invalid length".into()));
+                break;
             }
             if length > self.recv_buffer.len() {
                 break;
             }
-            if !crate::utils::adler32::check_adler32(&self.recv_buffer[..length]) {
+            if !is_auth_packet && !crate::utils::adler32::check_adler32(&self.recv_buffer[..length]) {
                 self.recv_buffer.clear();
-                return Err(crate::error::SsrError::Protocol("auth_sha1_v4: Adler32 mismatch".into()));
+                break;
             }
-            let rand_len_field_size = if self.recv_buffer[4] < 255 { 1 } else { 3 };
-            let rand_len = if self.recv_buffer[4] < 255 {
-                self.recv_buffer[4] as usize
+            let rand_len = if is_auth_packet {
+                // Auth packet: rand_len at position 6
+                if self.recv_buffer[6] < 255 {
+                    self.recv_buffer[6] as usize
+                } else {
+                    (self.recv_buffer[7] as usize) << 8 | self.recv_buffer[8] as usize
+                }
             } else {
-                (self.recv_buffer[5] as usize) << 8 | self.recv_buffer[6] as usize
+                // Data packet: rand_len at position 4
+                if self.recv_buffer[4] < 255 {
+                    self.recv_buffer[4] as usize
+                } else {
+                    (self.recv_buffer[5] as usize) << 8 | self.recv_buffer[6] as usize
+                }
             };
-            let pos = 4 + rand_len;
-            let data_size = length.saturating_sub(pos + 4);
-            output.extend_from_slice(&self.recv_buffer[pos..pos + data_size]);
+            let data_start = if is_auth_packet {
+                rand_len + 18 // auth_data(12) at rand_len+6, data after
+            } else {
+                4 + rand_len // data packet: data at 4+rand_len
+            };
+            let data_size = if is_auth_packet {
+                length - data_start - HMAC_SHA1_LEN
+            } else {
+                length.saturating_sub(data_start + 4) // -4 for adler32
+            };
+            output.extend_from_slice(&self.recv_buffer[data_start..data_start + data_size]);
             self.recv_buffer.drain(..length);
         }
         Ok(output)
