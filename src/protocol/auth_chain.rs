@@ -231,6 +231,24 @@ impl AuthChainA {
         output
     }
 
+
+    #[allow(dead_code)]
+    fn debug_print_auth(&self, auth: &[u8]) {
+        let hex_str: String = auth.iter().take(60).map(|b| format!("{:02x}", b)).collect();
+        let iv_hex: String = self.server_info.iv.iter().map(|b| format!("{:02x}", b)).collect();
+        let key_hex: String = self.server_info.key.iter().take(16).map(|b| format!("{:02x}", b)).collect();
+        let uk_hex: String = self.local.user_key.iter().take(16).map(|b| format!("{:02x}", b)).collect();
+        let lch_hex: String = self.local.last_client_hash.iter().map(|b| format!("{:02x}", b)).collect();
+        let uid_hex: String = self.local.uid.iter().map(|b| format!("{:02x}", b)).collect();
+        eprintln!("[auth_chain_debug] auth_header ({}B): {}", auth.len(), hex_str);
+        eprintln!("[auth_chain_debug] iv: {}", iv_hex);
+        eprintln!("[auth_chain_debug] key: {}", key_hex);
+        eprintln!("[auth_chain_debug] user_key: {}", uk_hex);
+        eprintln!("[auth_chain_debug] last_client_hash: {}", lch_hex);
+        eprintln!("[auth_chain_debug] salt: {}", self.local.salt);
+        eprintln!("[auth_chain_debug] uid: {}", uid_hex);
+    }
+
     fn pack_client_data(&mut self, data: &[u8]) -> Vec<u8> {
         let rand_len = Self::get_rand_len(&mut self.local, data.len());
         let out_size = rand_len + data.len() + 2 + 2; // +2 for length, +2 for HMAC
@@ -355,6 +373,7 @@ impl AuthChainA {
         if len > 0 && !self.local.has_sent_header {
             let head_size = 1200.min(len);
             let packed = self.pack_auth_data(&data[..head_size]);
+            self.debug_print_auth(&packed);
             result.extend_from_slice(&packed);
             data = &data[head_size..];
             len -= head_size;

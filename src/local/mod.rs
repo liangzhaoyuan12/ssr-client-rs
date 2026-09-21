@@ -438,10 +438,17 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
         // AEAD: origin protocol (no framing), matching C ssr_executive.c:178
         Box::new(crate::protocol::origin::Origin)
     } else {
-        let srv = ServerInfo {
+        let mut srv = ServerInfo {
             key: env.key().to_vec(),
             ..Default::default()
         };
+        // Set overhead based on protocol (C: auth_chain_a_get_overhead returns 4)
+        match config.protocol.as_str() {
+            "auth_chain_a" | "auth_chain_b" | "auth_chain_c" | "auth_chain_d" | "auth_chain_e" | "auth_chain_f" => {
+                srv.overhead = 4;
+            }
+            _ => {}
+        }
         match config.protocol.as_str() {
             // auth_aes128 variants
             "auth_aes128_md5" => Box::new(AuthAES128::new_md5(srv)),
