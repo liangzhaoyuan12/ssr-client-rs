@@ -161,11 +161,22 @@ AEAD 走 `AeadInOut`（不是旧的 `Aead` trait）。
 - ❌ 不是 obfs key 用空还是用主密钥 —— 两种都试过，都是同样的失败
 - ❌ 不是分帧本身 —— 5 种密码的单测 roundtrip / 拆包 / 篡改检测全过
 
-关键线索：strace 抓 C 客户端（`aes-256-gcm` + `auth_aes128_sha1` + `tls1.2_ticket_auth`）
-对服务器的**第一次写只有 73 字节的随机数据**，并不是 `16 03 01 ...` 的 TLS ClientHello。
-也就是说 **AEAD 组合下 obfs 层的行为和流密码不一样** —— 可能根本没走 tls1.2_ticket_auth
-的 ClientHello 流程，或者写入顺序/首包内容不同。下一步应该从这个 73 字节入手反推，
-而不是继续调 AEAD 模块本身。
+**根因定位**：tcpdump 抓包（透传代理在客户端和服务器之间）显示：
+  - aes-256-cfb（流密码）：C 客户端发送 936B TLS ClientHello → 成功
+  - aes-256-gcm（AEAD）：C 客户端发送 186B **非 TLS 格式数据** → 成功
+  - Rust 客户端发送 480B TLS ClientHello → 被服务器拒绝
+
+C 客户端在 AEAD 下的首包 73 字节首字节是 `0x50`（不是 `0x16`），**不符合 TLS 记录格式**。
+但 C 客户端的服务器（288B）正常响应，说明服务器接受了这种格式。
+
+**根本障碍**：`/opt/ssr/ssr-server` 二进制**不包含**源码中 obfs 的日志字符串
+（"tls_auth wrong sha"、"tls_auth not client hello" 等均不存在），表明运行的服务器使用了
+**与我们源码版本不同的 obfs 实现**。源码中的 `tls12_ticket_auth_client_encode` 无条件生成
+`16 03 01 ...` 格式的 ClientHello，但实际二进制在 AEAD 下走了**不同的 obfs 路径**，
+产生了非 TLS 格式的数据。
+
+这是 **阻塞项**：需要拿到服务器对应的源码版本（或反编译二进制的 obfs 部分），
+才能理解 AEAD 下的握手格式。单靠当前源码无法继续。
 
 > 生产配置 `aes-256-cfb + auth_aes128_sha1 + tls1.2_ticket_auth` 不受影响，回归验证全过
 > （真实服务器 httpbin 200 / github 200 / google 204，本地 ssr-server 200；183 个测试全过）。
