@@ -181,11 +181,13 @@ pub fn get_s5_head_size(plaindata: &[u8], def_size: usize) -> usize {
 pub fn ss_hmac_key(iv: &[u8], key: &[u8]) -> Vec<u8> {
     const MAX_IV_LENGTH: usize = 16;
     const MAX_KEY_LENGTH: usize = 64;
-    let mut hmac_key = vec![0u8; MAX_IV_LENGTH + MAX_KEY_LENGTH];
     let iv_len = iv.len().min(MAX_IV_LENGTH);
     let key_len = key.len().min(MAX_KEY_LENGTH);
+    // C code: auth_key = calloc(80), then buffer_create_from(auth_key, iv_len + key_len)
+    // Only iv_len + key_len bytes are used for HMAC, not the full 80
+    let mut hmac_key = vec![0u8; iv_len + key_len];
     hmac_key[..iv_len].copy_from_slice(&iv[..iv_len]);
-    hmac_key[MAX_IV_LENGTH..MAX_IV_LENGTH + key_len].copy_from_slice(&key[..key_len]);
+    hmac_key[iv_len..iv_len + key_len].copy_from_slice(&key[..key_len]);
     hmac_key
 }
 

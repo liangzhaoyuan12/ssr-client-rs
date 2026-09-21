@@ -447,6 +447,8 @@ impl Protocol for AuthChainA {
         4
     }
 
+    fn set_server_iv(&mut self, iv: Vec<u8>) { self.server_info.iv = iv; }
+
     fn need_feedback(&self) -> bool {
         true
     }
@@ -541,6 +543,7 @@ impl Protocol for AuthChainB {
     fn set_salt(&mut self, _salt: &str) {}
     fn get_overhead(&self) -> usize { 4 }
     fn need_feedback(&self) -> bool { true }
+    fn set_server_iv(&mut self, iv: Vec<u8>) { self.inner.set_server_iv(iv); }
 
     fn client_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
         self.inner.init_user_key();
@@ -666,6 +669,7 @@ impl Protocol for AuthChainC {
     fn set_salt(&mut self, _salt: &str) {}
     fn get_overhead(&self) -> usize { 4 }
     fn need_feedback(&self) -> bool { true }
+    fn set_server_iv(&mut self, iv: Vec<u8>) { self.inner.set_server_iv(iv); }
 
     fn client_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
         // Same as B but with C-specific rand_len
@@ -762,6 +766,7 @@ impl Protocol for AuthChainD {
     fn set_salt(&mut self, _salt: &str) {}
     fn get_overhead(&self) -> usize { 4 }
     fn need_feedback(&self) -> bool { true }
+    fn set_server_iv(&mut self, iv: Vec<u8>) { self.inner.set_server_iv(iv); }
 
     fn client_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
         self.inner.init_user_key();
@@ -827,6 +832,7 @@ impl Protocol for AuthChainE {
     fn set_salt(&mut self, _salt: &str) {}
     fn get_overhead(&self) -> usize { 4 }
     fn need_feedback(&self) -> bool { true }
+    fn set_server_iv(&mut self, iv: Vec<u8>) { self.inner.set_server_iv(iv); }
 
     fn client_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
         self.inner.init_user_key();
@@ -931,6 +937,7 @@ impl Protocol for AuthChainF {
     fn set_salt(&mut self, _salt: &str) {}
     fn get_overhead(&self) -> usize { 4 }
     fn need_feedback(&self) -> bool { true }
+    fn set_server_iv(&mut self, iv: Vec<u8>) { self.inner.set_server_iv(iv); }
 
     fn client_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
         self.inner.init_user_key();

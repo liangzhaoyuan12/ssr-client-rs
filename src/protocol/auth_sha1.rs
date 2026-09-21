@@ -82,6 +82,7 @@ impl Protocol for AuthSHA1 {
     fn set_salt(&mut self, _salt: &str) {}
     fn get_overhead(&self) -> usize { 0 }
     fn need_feedback(&self) -> bool { false }
+    fn set_server_iv(&mut self, iv: Vec<u8>) { self.server_info.iv = iv; }
 
     fn client_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
         let mut result = Vec::new();

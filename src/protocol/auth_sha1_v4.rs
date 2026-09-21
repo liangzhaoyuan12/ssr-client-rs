@@ -1,6 +1,6 @@
 use crate::error::SsrResult;
 use crate::utils::adler32::fill_adler32;
-use crate::utils::crc32::{fill_crc32, fill_crc32_to, crc32};
+use crate::utils::crc32::crc32;
 use crate::utils::hash::hmac_sha1;
 use super::ss_hmac_key;
 use super::{Protocol, GlobalData, ServerInfo, get_s5_head_size, memintcopy_lt, XorShift128Plus};
@@ -119,6 +119,9 @@ impl Protocol for AuthSHA1V4 {
     fn set_salt(&mut self, _salt: &str) {}
     fn get_overhead(&self) -> usize { 0 }
     fn need_feedback(&self) -> bool { true }
+    fn set_server_iv(&mut self, iv: Vec<u8>) {
+        self.server_info.iv = iv;
+    }
 
     fn client_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
         let mut result = Vec::new();
@@ -146,102 +149,44 @@ impl Protocol for AuthSHA1V4 {
     }
 
     fn client_post_decrypt(&mut self, data: &[u8]) -> SsrResult<Vec<u8>> {
+        // C: auth_sha1_v4_client_post_decrypt (auth.c:772)
+        // Client ONLY receives pack_data packets from the server (not pack_auth_data).
+        // No auth header, no HMAC, no CRC with salt — just data packet processing.
+        use crate::utils::adler32::check_adler32;
+
         self.recv_buffer.extend_from_slice(data);
         let mut output = Vec::new();
 
-        if !self.has_recv_header {
-            if self.recv_buffer.len() < 7 {
-                return Ok(output);
-            }
-            // Auth format: length(2) + CRC32(4) + zeros(2) + rand_len(1|3) + gap + auth_data(12) + data + HMAC(10)
-            let length = ((self.recv_buffer[0] as usize) << 8) | self.recv_buffer[1] as usize;
-            if length >= 8192 || length < 7 {
-                self.recv_buffer.clear();
-                return Err(crate::error::SsrError::Protocol("auth_sha1_v4: invalid auth length".into()));
-            }
-            if length > self.recv_buffer.len() {
-                return Ok(output);
-            }
-            let hmac_key = ss_hmac_key(&self.server_info.iv, &self.server_info.key);
-            let hash = hmac_sha1(&hmac_key, &self.recv_buffer[..length - HMAC_SHA1_LEN]);
-            if hash[..HMAC_SHA1_LEN] != self.recv_buffer[length - HMAC_SHA1_LEN..length] {
-                self.recv_buffer.clear();
-                return Err(crate::error::SsrError::Protocol("auth_sha1_v4: HMAC mismatch".into()));
-            }
-            let (rand_len, _rand_len_field_size) = if self.recv_buffer[6] < 255 {
-                (self.recv_buffer[6] as usize, 1)
-            } else {
-                ((self.recv_buffer[7] as usize) << 8 | self.recv_buffer[8] as usize, 3)
-            };
-            // C copies from rand_len+6 (auth_data+actual), but auth_data(12B)
-            // is timestamp+client_id+conn_id — strip it for roundtrip
-            let data_start = rand_len + 6 + 12; // skip auth_data (12 bytes)
-            let data_size = length - data_start - HMAC_SHA1_LEN;
-            output.extend_from_slice(&self.recv_buffer[data_start..data_start + data_size]);
-            self.recv_buffer.drain(..length);
-            self.has_recv_header = true;
-        }
-
         while self.recv_buffer.len() > 4 {
-            // Try auth packet CRC first: crc32(buffer[0..2] + salt + key)
-            let mut crc_src = Vec::new();
-            crc_src.extend_from_slice(&self.recv_buffer[0..2]);
-            crc_src.extend_from_slice(b"auth_sha1_v4");
-            crc_src.extend_from_slice(&self.server_info.key);
-            let crc_auth = crc32(&crc_src);
-            let crc_stock4 = (self.recv_buffer[2] as u32)
-                | ((self.recv_buffer[3] as u32) << 8)
-                | ((self.recv_buffer[4] as u32) << 16)
-                | ((self.recv_buffer[5] as u32) << 24);
-
-            // Try data packet CRC: crc32(buffer[0..2])
-            let crc_data = crc32(&self.recv_buffer[0..2]);
-            let crc_stock2 = (self.recv_buffer[2] as u32) | ((self.recv_buffer[3] as u32) << 8);
-
-            let is_auth_packet = crc_auth == crc_stock4;
-
-            if !is_auth_packet && (crc_data & 0xFFFF) != crc_stock2 {
+            let recv = &self.recv_buffer;
+            // CRC check: crc32(buffer[0..2]) truncated to uint16, compare with buffer[2..3]
+            let crc_val = crc32(&recv[0..2]);
+            let crc_stock = ((recv[3] as u32) << 8) | (recv[2] as u32);
+            if (crc_val & 0xFFFF) != crc_stock {
                 self.recv_buffer.clear();
                 break;
             }
-            let length = ((self.recv_buffer[0] as usize) << 8) | self.recv_buffer[1] as usize;
+            let length = ((recv[0] as usize) << 8) | recv[1] as usize;
             if length >= 8192 || length < 7 {
                 self.recv_buffer.clear();
                 break;
             }
             if length > self.recv_buffer.len() {
-                break;
+                break; // wait for more data
             }
-            if !is_auth_packet && !crate::utils::adler32::check_adler32(&self.recv_buffer[..length]) {
+            // Adler32 check
+            if !check_adler32(&recv[..length]) {
                 self.recv_buffer.clear();
                 break;
             }
-            let rand_len = if is_auth_packet {
-                // Auth packet: rand_len at position 6
-                if self.recv_buffer[6] < 255 {
-                    self.recv_buffer[6] as usize
-                } else {
-                    (self.recv_buffer[7] as usize) << 8 | self.recv_buffer[8] as usize
-                }
-            } else {
-                // Data packet: rand_len at position 4
-                if self.recv_buffer[4] < 255 {
-                    self.recv_buffer[4] as usize
-                } else {
-                    (self.recv_buffer[5] as usize) << 8 | self.recv_buffer[6] as usize
-                }
-            };
-            let data_start = if is_auth_packet {
-                rand_len + 18 // auth_data(12) at rand_len+6, data after
-            } else {
-                4 + rand_len // data packet: data at 4+rand_len
-            };
-            let data_size = if is_auth_packet {
-                length - data_start - HMAC_SHA1_LEN
-            } else {
-                length.saturating_sub(data_start + 4) // -4 for adler32
-            };
-            output.extend_from_slice(&self.recv_buffer[data_start..data_start + data_size]);
+            // Extract data from pack_data format:
+            // [length(2)][CRC(2)][rand_len(1|3)][zeros(rand_len)][data][adler32(4)]
+            let pos = recv[4] as usize;
+            let data_start = if pos < 255 { pos + 4 } else { ((recv[5] as usize) << 8 | recv[6] as usize) + 4 };
+            let data_size = length.saturating_sub(data_start + 4); // -4 for adler32
+            if data_size > 0 {
+                output.extend_from_slice(&recv[data_start..data_start + data_size]);
+            }
             self.recv_buffer.drain(..length);
         }
         Ok(output)
@@ -260,10 +205,16 @@ mod tests {
             ..Default::default()
         };
         let mut proto = AuthSHA1V4::new(server_info);
+        // Phase 1: client_pre_encrypt with address → generates pack_auth_data (auth header)
+        let address = vec![0x01, 127, 0, 0, 1, 0x46, 0xA0]; // 127.0.0.1:18080
+        let framed = proto.client_pre_encrypt(&address).unwrap();
+        assert!(framed.len() > address.len());
+        // Phase 2: client_pre_encrypt with data → generates pack_data packets
         let data = b"hello auth_sha1_v4";
-        let framed = proto.client_pre_encrypt(data).unwrap();
-        assert!(framed.len() > data.len());
-        let plain = proto.client_post_decrypt(&framed).unwrap();
+        let data_framed = proto.client_pre_encrypt(data).unwrap();
+        assert!(data_framed.len() > data.len());
+        // client_post_decrypt only handles data packets (not auth header)
+        let plain = proto.client_post_decrypt(&data_framed).unwrap();
         assert_eq!(plain, data);
     }
 }
