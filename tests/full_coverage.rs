@@ -10,6 +10,9 @@ fn si() -> ServerInfo {
     ServerInfo { key: vec![0x42u8; 16], iv: vec![0x24u8; 16], ..Default::default() }
 }
 
+/// Address-like payload to trigger auth header generation for auth_sha1_v4.
+const AUTH_V4_ADDR_PAYLOAD: &[u8] = &[0x01, 127, 0, 0, 1, 0x46, 0xA0];
+
 // ==================== All 28 Cipher Methods ====================
 
 fn test_cipher_roundtrip(method: &str, key_len: usize, iv_len: usize) {
@@ -91,7 +94,6 @@ fn test_protocol_large(proto: &mut dyn Protocol, name: &str) {
 #[test] fn test_proto_auth_simple() { test_protocol_roundtrip(&mut ssr_client_rs::protocol::auth_simple::AuthSimple::new(), "auth_simple"); }
 #[test] fn test_proto_auth_sha1() { test_protocol_roundtrip(&mut ssr_client_rs::protocol::auth_sha1::AuthSHA1::new(si()), "auth_sha1"); }
 #[test] fn test_proto_auth_sha1_v2() { test_protocol_roundtrip(&mut ssr_client_rs::protocol::auth_sha1_v2::AuthSHA1V2::new(si()), "auth_sha1_v2"); }
-#[test] fn test_proto_auth_sha1_v4() { test_protocol_roundtrip(&mut ssr_client_rs::protocol::auth_sha1_v4::AuthSHA1V4::new(si()), "auth_sha1_v4"); }
 #[test] fn test_proto_auth_chain_a() { let data = b"test"; let framed = ssr_client_rs::protocol::auth_chain::AuthChainA::new(si(), "auth_chain_a").client_pre_encrypt(data).unwrap(); assert!(!framed.is_empty()); }
 #[test] fn test_proto_auth_chain_b() { let data = b"test"; let framed = ssr_client_rs::protocol::auth_chain::AuthChainB::new(si()).client_pre_encrypt(data).unwrap(); assert!(!framed.is_empty()); }
 #[test] fn test_proto_auth_chain_c() { let data = b"test"; let framed = ssr_client_rs::protocol::auth_chain::AuthChainC::new(si()).client_pre_encrypt(data).unwrap(); assert!(!framed.is_empty()); }
@@ -99,10 +101,33 @@ fn test_protocol_large(proto: &mut dyn Protocol, name: &str) {
 #[test] fn test_proto_auth_chain_e() { let data = b"test"; let framed = ssr_client_rs::protocol::auth_chain::AuthChainE::new(si()).client_pre_encrypt(data).unwrap(); assert!(!framed.is_empty()); }
 #[test] fn test_proto_auth_chain_f() { let data = b"test"; let framed = ssr_client_rs::protocol::auth_chain::AuthChainF::new(si(), "").client_pre_encrypt(data).unwrap(); assert!(!framed.is_empty()); }
 
+// auth_sha1_v4: send address payload first to trigger auth header, then actual data
+#[test]
+fn test_proto_auth_sha1_v4() {
+    let mut proto = ssr_client_rs::protocol::auth_sha1_v4::AuthSHA1V4::new(si());
+    let data = format!("protocol test data for auth_sha1_v4");
+    // Phase 1: trigger auth header
+    let _header = proto.client_pre_encrypt(AUTH_V4_ADDR_PAYLOAD).unwrap();
+    // Phase 2: send actual data
+    let framed = proto.client_pre_encrypt(data.as_bytes()).unwrap();
+    let plain = proto.client_post_decrypt(&framed).unwrap();
+    assert_eq!(plain, data.as_bytes(), "auth_sha1_v4: roundtrip failed");
+}
+
 // Large data tests
 #[test] fn test_proto_origin_large() { test_protocol_large(&mut ssr_client_rs::protocol::origin::Origin, "origin"); }
 #[test] fn test_proto_verify_simple_large() { test_protocol_large(&mut ssr_client_rs::protocol::verify_simple::VerifySimple::new(), "verify_simple"); }
-#[test] fn test_proto_auth_sha1_v4_large() { test_protocol_large(&mut ssr_client_rs::protocol::auth_sha1_v4::AuthSHA1V4::new(si()), "auth_sha1_v4"); }
+#[test]
+fn test_proto_auth_sha1_v4_large() {
+    let mut proto = ssr_client_rs::protocol::auth_sha1_v4::AuthSHA1V4::new(si());
+    let data = vec![0xCDu8; 8192];
+    // Phase 1: trigger auth header
+    let _header = proto.client_pre_encrypt(AUTH_V4_ADDR_PAYLOAD).unwrap();
+    // Phase 2: send actual data
+    let framed = proto.client_pre_encrypt(&data).unwrap();
+    let plain = proto.client_post_decrypt(&framed).unwrap();
+    assert_eq!(plain, data, "auth_sha1_v4: large data roundtrip failed");
+}
 
 // auth_aes128 - uses private pack_data, test via data packets
 #[test] fn test_proto_auth_aes128_data() {
@@ -126,22 +151,26 @@ fn test_obfs_roundtrip(obfs: &mut dyn Obfs, name: &str) {
     assert_eq!(decoded, data.as_bytes(), "{name}: roundtrip failed");
 }
 
-#[test] fn test_obfs_plain() {
+#[test]
+fn test_obfs_plain() {
     let mut p = ssr_client_rs::obfs::plain::PlainObfs;
     test_obfs_roundtrip(&mut p, "plain");
 }
 
-#[test] fn test_obfs_http_simple() {
+#[test]
+fn test_obfs_http_simple() {
     let mut h = ssr_client_rs::obfs::http_simple::HttpSimpleObfs::new("example.com".into(), 80, "".into());
     let data = b"obfs test data for http_simple"; let encoded = h.client_encode(data).unwrap(); assert!(!encoded.is_empty()); let encoded_str = String::from_utf8_lossy(&encoded); assert!(encoded_str.contains("GET /")); assert!(encoded_str.contains("Host: example.com"));
 }
 
-#[test] fn test_obfs_http_post() {
+#[test]
+fn test_obfs_http_post() {
     let mut h = ssr_client_rs::obfs::http_simple::HttpPostObfs::new("example.com".into(), 80, "".into());
     let data = b"obfs test data for http_post"; let encoded = h.client_encode(data).unwrap(); assert!(!encoded.is_empty()); let encoded_str = String::from_utf8_lossy(&encoded); assert!(encoded_str.contains("POST /")); assert!(encoded_str.contains("Host: example.com"));
 }
 
-#[test] fn test_obfs_http_mix() {
+#[test]
+fn test_obfs_http_mix() {
     let mut h = ssr_client_rs::obfs::http_simple::HttpMixObfs::new("example.com".into(), 80, "".into());
     // http_mix randomly chooses GET or POST, just verify it doesn't panic
     let data = b"http mix test";
@@ -188,15 +217,32 @@ fn test_full_pipeline(proto: &mut dyn Protocol, method: &str, name: &str) {
 #[test] fn test_pipeline_verify_aes256_cfb() {
     test_full_pipeline(&mut ssr_client_rs::protocol::verify_simple::VerifySimple::new(), "aes-256-cfb", "verify_simple");
 }
+
+// auth_sha1_v4 pipeline tests: send address payload first, then actual data
+fn test_full_pipeline_auth_sha1_v4(method: &str) {
+    let mut proto = ssr_client_rs::protocol::auth_sha1_v4::AuthSHA1V4::new(si());
+    let env = CipherEnv::new("password", method).unwrap();
+    let data = format!("full pipeline test for auth_sha1_v4 with {method}");
+    // Phase 1: trigger auth header
+    let _header = proto.client_pre_encrypt(AUTH_V4_ADDR_PAYLOAD).unwrap();
+    // Phase 2: send actual data
+    let framed = proto.client_pre_encrypt(data.as_bytes()).unwrap();
+    let encrypted = env.encrypt(&framed).unwrap();
+    let decrypted = env.decrypt(&encrypted).unwrap();
+    let plain = proto.client_post_decrypt(&decrypted).unwrap();
+    assert_eq!(plain, data.as_bytes(), "auth_sha1_v4+{method}: pipeline failed");
+}
+
 #[test] fn test_pipeline_auth_sha1_v4_aes256_cfb() {
-    test_full_pipeline(&mut ssr_client_rs::protocol::auth_sha1_v4::AuthSHA1V4::new(si()), "aes-256-cfb", "auth_sha1_v4");
+    test_full_pipeline_auth_sha1_v4("aes-256-cfb");
 }
 #[test] fn test_pipeline_auth_sha1_v4_aes128_cfb() {
-    test_full_pipeline(&mut ssr_client_rs::protocol::auth_sha1_v4::AuthSHA1V4::new(si()), "aes-128-cfb", "auth_sha1_v4");
+    test_full_pipeline_auth_sha1_v4("aes-128-cfb");
 }
 #[test] fn test_pipeline_auth_sha1_v4_chacha20() {
-    test_full_pipeline(&mut ssr_client_rs::protocol::auth_sha1_v4::AuthSHA1V4::new(si()), "chacha20", "auth_sha1_v4");
+    test_full_pipeline_auth_sha1_v4("chacha20");
 }
+
 #[test] fn test_pipeline_auth_chain_a_aes256_cfb() {
     let si = ServerInfo { key: vec![0x42u8; 16], iv: vec![0x24u8; 16], ..Default::default() }; let mut proto = ssr_client_rs::protocol::auth_chain::AuthChainA::new(si, "auth_chain_a"); let data = b"pipeline test"; let framed = proto.client_pre_encrypt(data).unwrap(); assert!(!framed.is_empty()); let env = CipherEnv::new("password", "aes-256-cfb").unwrap(); let encrypted = env.encrypt(&framed).unwrap(); assert!(!encrypted.is_empty());
 }

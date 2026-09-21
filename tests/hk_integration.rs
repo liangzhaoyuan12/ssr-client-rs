@@ -134,6 +134,10 @@ fn test_hk_auth_sha1_v2_pipeline() {
 fn test_hk_auth_sha1_v4_pipeline() {
     let si = server_info();
     let mut proto = AuthSHA1V4::new(si);
+    // Phase 1: trigger auth header
+    let addr = vec![0x01, 127, 0, 0, 1, 0x46, 0xA0];
+    let _ = proto.client_pre_encrypt(&addr).unwrap();
+    // Phase 2: data packets only
     let data = b"auth sha1 v4 test for hk";
     let framed = proto.client_pre_encrypt(data).unwrap();
     let plain = proto.client_post_decrypt(&framed).unwrap();
@@ -186,6 +190,11 @@ fn test_hk_auth_sha1_v4_full_pipeline() {
     let si = server_info();
     let mut proto = AuthSHA1V4::new(si);
     let env = CipherEnv::new("test-password", "aes-256-cfb").unwrap();
+    // Phase 1: trigger auth header
+    let addr = vec![0x01, 127, 0, 0, 1, 0x46, 0xA0];
+    let addr_framed = proto.client_pre_encrypt(&addr).unwrap();
+    let _ = env.encrypt(&addr_framed).unwrap();
+    // Phase 2: data packets only
     let data = b"auth sha1 v4 full pipeline for hk";
     let framed = proto.client_pre_encrypt(data).unwrap();
     let encrypted = env.encrypt(&framed).unwrap();
@@ -200,6 +209,11 @@ fn test_hk_large_data_pipeline() {
     let si = server_info();
     let mut proto = AuthSHA1V4::new(si);
     let env = CipherEnv::new("test-password", "aes-256-cfb").unwrap();
+    // Phase 1: trigger auth header
+    let addr = vec![0x01, 127, 0, 0, 1, 0x46, 0xA0];
+    let addr_framed = proto.client_pre_encrypt(&addr).unwrap();
+    let _ = env.encrypt(&addr_framed).unwrap();
+    // Phase 2: large data packets
     let data: Vec<u8> = (0..4096).map(|i| (i % 256) as u8).collect();
     let framed = proto.client_pre_encrypt(&data).unwrap();
     let encrypted = env.encrypt(&framed).unwrap();
