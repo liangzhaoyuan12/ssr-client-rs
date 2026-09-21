@@ -34,7 +34,7 @@ impl AuthSHA1V4 {
     }
 
     fn get_rand_len(&mut self, datalength: usize) -> usize {
-        if datalength > 1300 { 0 }
+        if datalength > 1300 { 1 }
         else if datalength > 400 { ((self.rng.next() & 0x7F) + 1) as usize }
         else { ((self.rng.next() & 0x3FF) + 1) as usize }
     }
@@ -173,8 +173,9 @@ impl Protocol for AuthSHA1V4 {
             } else {
                 ((self.recv_buffer[7] as usize) << 8 | self.recv_buffer[8] as usize, 3)
             };
-            // C: data_offset = rand_len + 6, auth data is 12 bytes, data follows
-            let data_start = rand_len + 18; // data_offset(6+rand_len) + auth(12)
+            // C copies from rand_len+6 (auth_data+actual), but auth_data(12B)
+            // is timestamp+client_id+conn_id — strip it for roundtrip
+            let data_start = rand_len + 6 + 12; // skip auth_data (12 bytes)
             let data_size = length - data_start - HMAC_SHA1_LEN;
             output.extend_from_slice(&self.recv_buffer[data_start..data_start + data_size]);
             self.recv_buffer.drain(..length);
@@ -206,7 +207,7 @@ impl Protocol for AuthSHA1V4 {
             } else {
                 (self.recv_buffer[5] as usize) << 8 | self.recv_buffer[6] as usize
             };
-            let pos = 4 + rand_len_field_size + rand_len;
+            let pos = 4 + rand_len;
             let data_size = length.saturating_sub(pos + 4);
             output.extend_from_slice(&self.recv_buffer[pos..pos + data_size]);
             self.recv_buffer.drain(..length);
