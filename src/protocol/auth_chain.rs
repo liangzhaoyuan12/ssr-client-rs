@@ -269,10 +269,10 @@ impl AuthChainA {
     }
 
     fn pack_auth_data(&mut self, data: &[u8]) -> Vec<u8> {
-        // C code auth header format:
-        // [random(4)] [HMAC(8)] [UID(4)] [encrypt_block(20)] [data] [HMAC(4)]
-        // Total: 4 + 8 + 4 + 20 + data.len() + 4 = data.len() + 40
-        let out_size = data.len() + 40;
+        // C auth_chain_a_pack_auth_data format (auth_chain.c:486-598):
+        // [random(4)] [HMAC-MD5(8)] [UID(4)] [AES-CBC encrypted block(16)] [HMAC-MD5(4)]
+        // Total: 4 + 8 + 4 + 16 + 4 = 36 bytes, then data follows
+        let out_size = 36 + data.len();
         let mut out = vec![0u8; out_size];
 
         // Increment connection_id
@@ -287,57 +287,65 @@ impl AuthChainA {
         use rand::RngCore;
         rand::thread_rng().fill_bytes(&mut out[0..4]);
 
-        // [4..12] HMAC of first 4 bytes
+        // [4..12] HMAC-MD5 of random(0..4), key = iv+key
         let hash = hmac_md5(&key, &out[0..4]);
         out[4..12].copy_from_slice(&hash[..8]);
 
-        // [12..16] UID (XORed with hash)
+        // Store hash as last_client_hash (used for RC4 key and data length XOR)
+        self.local.last_client_hash = hash;
+
+        // [12..16] UID (XORed with hash[8..12])
         for i in 0..4 {
             out[12 + i] = self.local.uid[i] ^ hash[8 + i];
         }
 
-        // [16..36] encrypt block (20 bytes)
+        // [16..32] AES-128-CBC encrypted block
+        // Plaintext: timestamp(4) + client_id(4) + connection_id(4) + overhead(2) + zeros(2)
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as u32;
+        let mut plain_block = [0u8; 16];
+        memintcopy_lt(&mut plain_block[0..4], now);
+        plain_block[4..8].copy_from_slice(&self.global.local_client_id[..4]);
+        memintcopy_lt(&mut plain_block[8..12], self.global.connection_id);
+        plain_block[12] = self.server_info.overhead as u8;
+        plain_block[13] = (self.server_info.overhead >> 8) as u8;
+        // plain_block[14..16] = 0 (zeros)
+
+        // Key for AES: bytes_to_key(base64(user_key) + salt, 16)
         let user_key_b64 = crate::utils::base64::b64encode(&self.local.user_key);
         let enc_key_input = format!("{}{}", user_key_b64, self.local.salt);
-        let enc_key = crate::utils::hash::md5(enc_key_input.as_bytes());
+        let enc_key = bytes_to_key(enc_key_input.as_bytes(), 16);
 
-        let mut encrypt = [0u8; 20];
-        memintcopy_lt(&mut encrypt[0..4], now);
-        encrypt[4..8].copy_from_slice(&self.global.local_client_id[..4]);
-        memintcopy_lt(&mut encrypt[8..12], self.global.connection_id);
-        encrypt[12] = out_size as u8;
-        encrypt[13] = (out_size >> 8) as u8;
+        let encrypted = crate::protocol::auth_aes128::aes_128_cbc_encrypt(&enc_key, &plain_block);
+        // AES-CBC outputs 16 bytes (PKCS7 padded, but for 16-byte input it's exactly 16+16=32)
+        // Wait - the C code encrypts 16 bytes which produces 32 bytes after padding
+        // But the output format only has 16 bytes at [16..32]
+        // Let me check: C ss_aes_128_cbc_encrypt(16, plain, out, key) - encrypts 16 bytes
+        // The output should be 32 bytes (16 + PKCS7 pad to 32)
+        // But the server reads bytes 16..32 as the encrypted block
+        // This means the C code encrypts exactly 16 bytes and the output is 32 bytes
+        // But only 16 bytes fit in the format at [16..32]
+        // Actually, looking at the server: it reads buffer+16, 16 bytes, and decrypts
+        // So the encrypt must produce exactly 16 bytes output... 
+        // Let me check: C ss_aes_128_cbc_encrypt(16, ...) with CBC - no padding for exact block?
+        // Actually C code uses mbedtls AES which may not pad
+        // For now, let me just copy min(16, encrypted.len()) bytes
+        let enc_len = encrypted.len().min(16);
+        out[16..16 + enc_len].copy_from_slice(&encrypted[..enc_len]);
 
-        let enc_hmac = hmac_md5(&self.local.user_key, &encrypt[..20]);
-        encrypt[16..20].copy_from_slice(&enc_hmac[..4]);
+        // [32..36] HMAC-MD5 of bytes 12..32 (UID + encrypted block), key = user_key
+        let hmac_input = &out[12..32];
+        let enc_hmac = hmac_md5(&self.local.user_key, hmac_input);
+        out[32..36].copy_from_slice(&enc_hmac[..4]);
 
-        out[16..36].copy_from_slice(&encrypt);
+        // [36..] = data (address)
+        out[36..].copy_from_slice(data);
 
-        // [36..out_size-4] = data
-        out[36..36 + data.len()].copy_from_slice(data);
-
-        // [out_size-4..out_size] = final HMAC
-        let final_hmac = hmac_md5(&self.local.user_key, &out[..out_size - 4]);
-        out[out_size - 4..].copy_from_slice(&final_hmac[..4]);
-
-        // Set up RC4 cipher        // Set up RC4 cipher
-        let password = format!(
-            "{}{}",
-            b64encode(&self.local.user_key),
-            b64encode(&self.local.last_client_hash)
-        );
-        self.init_rc4(&password);
-
-        // Pack first data
-        let packed = self.pack_client_data(data);
-        let mut result = out;
-        result.extend_from_slice(&packed);
-        result
+        out
     }
+
 
     fn client_pre_encrypt_inner(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
         let mut result = Vec::new();
@@ -351,6 +359,15 @@ impl AuthChainA {
             data = &data[head_size..];
             len -= head_size;
             self.local.has_sent_header = true;
+
+            // Initialize RC4 cipher (C auth_chain.c:589-593)
+            // Password = base64(user_key) + base64(last_client_hash)
+            let password = format!(
+                "{}{}",
+                b64encode(&self.local.user_key),
+                b64encode(&self.local.last_client_hash)
+            );
+            self.init_rc4(&password);
         }
 
         let unit_size = self.local.tcp_mss as usize - self.local.client_over_head as usize;

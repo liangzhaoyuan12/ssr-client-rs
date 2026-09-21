@@ -244,7 +244,7 @@ impl AuthAES128 {
 }
 
 /// Simple AES-128-CBC encrypt (PKCS7 padding)
-fn aes_128_cbc_encrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
+pub(crate) fn aes_128_cbc_encrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
     use aes::cipher::{BlockCipherEncrypt, KeyInit};
     type Aes128Enc = aes::Aes128;
 
