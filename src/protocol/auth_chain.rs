@@ -999,3 +999,12 @@ mod tests {
         assert!(val != 0);
     }
 }
+
+// SAFETY: These types contain raw pointers (for C FFI compatibility), but
+// they are never used in async contexts that require Send. Adding Send here
+// allows them to exist as trait objects without blocking the Protocol trait.
+unsafe impl Send for AuthChainA {}
+unsafe impl Send for AuthChainB {}
+unsafe impl Send for AuthChainC {}
+unsafe impl Send for AuthChainD {}
+unsafe impl Send for AuthChainE {}

@@ -12,7 +12,7 @@ use crate::error::SsrResult;
 /// Protocol trait — each protocol implements two core functions:
 /// - `client_pre_encrypt`: wrap data before sending
 /// - `client_post_decrypt`: unwrap data after receiving
-pub trait Protocol {
+pub trait Protocol: Send {
     /// Set the salt for this protocol instance
     fn set_salt(&mut self, salt: &str);
 
@@ -21,6 +21,13 @@ pub trait Protocol {
 
     /// Whether this protocol needs feedback (send empty data back)
     fn need_feedback(&self) -> bool;
+
+    /// Initialize the user key (for auth_aes128; no-op for origin/plain).
+    fn init_user_key(&mut self) {}
+
+    /// Set the server IV (cipher IV) for the protocol's MAC computation.
+    /// Only relevant for auth_aes128; origin/plain protocols ignore this.
+    fn set_server_iv(&mut self, _iv: Vec<u8>) {}
 
     /// Wrap data before encryption (client side)
     /// Returns the framed data ready for encryption
@@ -168,6 +175,18 @@ pub fn get_s5_head_size(plaindata: &[u8], def_size: usize) -> usize {
         }
         _ => def_size,
     }
+}
+
+/// Build HMAC-SHA1 key matching C's ss_sha1_hmac: iv + key + zeros padded to MAX_IV_LENGTH + MAX_KEY_LENGTH (80 bytes)
+pub fn ss_hmac_key(iv: &[u8], key: &[u8]) -> Vec<u8> {
+    const MAX_IV_LENGTH: usize = 16;
+    const MAX_KEY_LENGTH: usize = 64;
+    let mut hmac_key = vec![0u8; MAX_IV_LENGTH + MAX_KEY_LENGTH];
+    let iv_len = iv.len().min(MAX_IV_LENGTH);
+    let key_len = key.len().min(MAX_KEY_LENGTH);
+    hmac_key[..iv_len].copy_from_slice(&iv[..iv_len]);
+    hmac_key[MAX_IV_LENGTH..MAX_IV_LENGTH + key_len].copy_from_slice(&key[..key_len]);
+    hmac_key
 }
 
 /// Little-endian u32 write

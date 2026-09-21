@@ -116,7 +116,7 @@ struct ObfsRelay {
     remote_write: tokio::net::tcp::OwnedWriteHalf,
     obfs: Box<dyn crate::obfs::Obfs>,
     cipher_env: crate::crypto::cipher_env::CipherEnv,
-    protocol: crate::protocol::auth_aes128::AuthAES128,
+    protocol: Box<dyn crate::protocol::Protocol>,
     encrypt_ctx: crate::crypto::cipher_env::EncryptContext,
     decrypt_ctx: Option<crate::crypto::cipher_env::DecryptContext>,
     cipher_iv: Vec<u8>,
@@ -133,7 +133,7 @@ impl ObfsRelay {
         remote: TcpStream,
         obfs: Box<dyn crate::obfs::Obfs>,
         cipher_env: crate::crypto::cipher_env::CipherEnv,
-        mut protocol: crate::protocol::auth_aes128::AuthAES128,
+        mut protocol: Box<dyn crate::protocol::Protocol>,
         addr_pkg: Vec<u8>,
     ) -> SsrResult<Self> {
         let (local_read, local_write) = local.into_split();
@@ -204,17 +204,18 @@ impl ObfsRelay {
             total_up += self.addr_pkg.len() as u64;
 
             // Read server feedback after sending address
-            // The server should respond with feedback after CCS+Finished
-            let n = tokio::time::timeout(
-                std::time::Duration::from_secs(10),
-                self.remote_read.read(&mut remote_buf),
-            ).await;
-            match n {
-                Ok(Ok(0)) => {
-                    ssr_debug!("[relay] Server closed after address");
-                }
-                Ok(Ok(n)) => {
-                    ssr_debug!("[relay] Server feedback: {} bytes", n);
+            // For origin protocol (AEAD): no feedback needed, skip wait
+            if self.protocol.need_feedback() {
+                let n = tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    self.remote_read.read(&mut remote_buf),
+                ).await;
+                match n {
+                    Ok(Ok(0)) => {
+                        ssr_debug!("[relay] Server closed after address");
+                    }
+                    Ok(Ok(n)) => {
+                        ssr_debug!("[relay] Server feedback: {} bytes", n);
                     // Process server feedback (obfs decode, cipher decrypt, protocol post_decrypt)
                     let (decrypted_obfs, _needs_feedback) = self.obfs.client_decode(&remote_buf[..n])?;
                     if !decrypted_obfs.is_empty() {
@@ -236,6 +237,7 @@ impl ObfsRelay {
                     ssr_debug!("[relay] Server feedback timeout/error");
                 }
             }
+            } // end if need_feedback
         }
 
         ssr_debug!("[relay] Starting streaming relay loop");
@@ -244,7 +246,32 @@ impl ObfsRelay {
                 result = self.local_read.read(&mut local_buf) => {
                     match result {
                         Ok(0) => {
-                            ssr_debug!("[relay] EOF from client");
+                            ssr_debug!("[relay] EOF from client, draining server...");
+                            // Client closed — send FIN to server, then drain remaining server data
+                            let _ = self.remote_write.shutdown().await;
+                            loop {
+                                match self.remote_read.read(&mut remote_buf).await {
+                                    Ok(0) => { ssr_debug!("[relay] Server EOF after drain"); break; }
+                                    Ok(n) => {
+                                        let (decrypted_obfs, _) = self.obfs.client_decode(&remote_buf[..n])?;
+                                        if !decrypted_obfs.is_empty() {
+                                            let decrypted_cipher = if let Some(ref mut dctx) = self.decrypt_ctx {
+                                                self.cipher_env.decrypt_ctx(dctx, &decrypted_obfs)?
+                                            } else {
+                                                let (dctx, data) = self.cipher_env.create_decrypt_ctx_from_ciphertext(&decrypted_obfs)?;
+                                                self.decrypt_ctx = Some(dctx);
+                                                self.cipher_env.decrypt_ctx(self.decrypt_ctx.as_mut().unwrap(), &data)?
+                                            };
+                                            let decoded = self.protocol.client_post_decrypt(&decrypted_cipher)?;
+                                            if !decoded.is_empty() {
+                                                self.local_write.write_all(&decoded).await?;
+                                            }
+                                            total_down += n as u64;
+                                        }
+                                    }
+                                    Err(_) => break,
+                                }
+                            }
                             break;
                         }
                         Ok(n) => {
@@ -352,16 +379,26 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
 
     // Create cipher and obfs instances
     use crate::crypto::cipher_env::CipherEnv;
+    use crate::crypto::aead::AeadCipher;
+    use crate::crypto::types::CipherType;
     let env = CipherEnv::new(&config.password, &config.method)?;
-    let mut obfs_inst = crate::obfs::create_obfs(
-        &config.obfs,
-        &config.server,
-        config.server_port,
-        &config.obfs_param,
-    )
-    .ok_or_else(|| SsrError::Obfs(format!("Unsupported obfs: {}", config.obfs)))?;
+    let method = CipherType::from_name(&config.method)?;
+    let is_aead = AeadCipher::is_aead(method);
+
+    // AEAD downgrade (ssr_executive.c:175-179): plain obfs + origin protocol
+    let mut obfs_inst = if is_aead {
+        Box::new(crate::obfs::plain::PlainObfs::new()) as Box<dyn crate::obfs::Obfs>
+    } else {
+        crate::obfs::create_obfs(
+            &config.obfs,
+            &config.server,
+            config.server_port,
+            &config.obfs_param,
+        )
+        .ok_or_else(|| SsrError::Obfs(format!("Unsupported obfs: {}", config.obfs)))?
+    };
     obfs_inst.set_key(env.key().to_vec());
-    ssr_debug!("[conn] Created obfs instance");
+    ssr_debug!("[conn] Created obfs instance{}", if is_aead { " (AEAD→plain)" } else { "" });
 
     // Step 4: Perform the obfs handshake, if this obfs uses one.
     // Plain / HTTP obfs carry their framing with the first data packet and send
@@ -388,24 +425,49 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
     ssr_debug!("[conn] Address package: {} bytes", addr_pkg.len());
 
     // Step 6: Relay data between client and SSR server (with obfs encode/decode)
+    //
+    // AEAD downgrade already applied above (obfs=plain, protocol=origin).
     use crate::protocol::auth_aes128::AuthAES128;
+    use crate::protocol::auth_chain::*;
+    use crate::protocol::auth_sha1_v4::AuthSHA1V4;
+    use crate::protocol::auth_sha1_v2::AuthSHA1V2;
+    use crate::protocol::auth_sha1::AuthSHA1;
+    use crate::protocol::auth_simple::AuthSimple;
     use crate::protocol::{Protocol, ServerInfo};
-    let mut protocol = match config.protocol.as_str() {
-        "auth_aes128_md5" => AuthAES128::new_md5(ServerInfo {
+    let mut protocol: Box<dyn Protocol> = if is_aead {
+        // AEAD: origin protocol (no framing), matching C ssr_executive.c:178
+        Box::new(crate::protocol::origin::Origin)
+    } else {
+        let srv = ServerInfo {
             key: env.key().to_vec(),
             ..Default::default()
-        }),
-        "auth_aes128_sha1" => AuthAES128::new_sha1(ServerInfo {
-            key: env.key().to_vec(),
-            ..Default::default()
-        }),
-        other => {
-            // Do NOT silently fall back to a default variant: every protocol
-            // variant uses a different HMAC/hash/salt, so guessing produces
-            // frames that decrypt but never authenticate.
-            return Err(SsrError::Protocol(format!(
-                "Unsupported protocol '{other}' (supported: auth_aes128_md5, auth_aes128_sha1)"
-            )));
+        };
+        match config.protocol.as_str() {
+            // auth_aes128 variants
+            "auth_aes128_md5" => Box::new(AuthAES128::new_md5(srv)),
+            "auth_aes128_sha1" => Box::new(AuthAES128::new_sha1(srv)),
+            // auth_sha1_v4
+            "auth_sha1_v4" => Box::new(AuthSHA1V4::new(srv)),
+            // auth_sha1_v2
+            "auth_sha1_v2" => Box::new(AuthSHA1V2::new(srv)),
+            // auth_sha1
+            "auth_sha1" => Box::new(AuthSHA1::new(srv)),
+            // auth_simple
+            "auth_simple" => Box::new(AuthSimple::new()),
+            // auth_chain variants
+            "auth_chain_a" => Box::new(AuthChainA::new(srv, "auth_chain_a")),
+            "auth_chain_b" => Box::new(AuthChainB::new(srv)),
+            "auth_chain_c" => Box::new(AuthChainC::new(srv)),
+            "auth_chain_d" => Box::new(AuthChainD::new(srv)),
+            "auth_chain_e" => Box::new(AuthChainE::new(srv)),
+            "auth_chain_f" => Box::new(AuthChainF::new(srv, &config.protocol_param)),
+            // origin (no framing)
+            "origin" | "" => Box::new(crate::protocol::origin::Origin),
+            other => {
+                return Err(SsrError::Protocol(format!(
+                    "Unsupported protocol '{other}'"
+                )));
+            }
         }
     };
     protocol.init_user_key();
