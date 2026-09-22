@@ -203,6 +203,33 @@ fn rand_len_c(
     (c.data_size_list0[final_pos] as usize).saturating_sub(other_data_size)
 }
 
+/// C: auth_chain_d_get_rand_len (auth_chain.c:1368-1388). Unlike variant C,
+/// the guard `other >= list0.last()` comes BEFORE the reinit and returns 0
+/// directly — there is no >1440/>1300 fallback ladder here.
+fn rand_len_d(
+    random: &mut Shift128plusCtx,
+    last_hash: &[u8; 16],
+    ctx: &RandLenCtx,
+    datalength: usize,
+) -> usize {
+    let overhead = ctx.overhead as usize;
+    let c = ctx
+        .c
+        .as_ref()
+        .expect("auth_chain_d: missing data_size_list0 context");
+    let other_data_size = datalength + overhead;
+
+    // if other_data_size > the biggest item in data_size_list0, no padding
+    if other_data_size >= c.data_size_list0[c.data_size_list0.len() - 1] as usize {
+        return 0;
+    }
+
+    *random = Shift128plusCtx::from_bin_datalen(last_hash, datalength);
+    let pos = find_pos(&c.data_size_list0, other_data_size as i32);
+    let final_pos = pos + (random.next() as usize) % (c.data_size_list0.len() - pos);
+    (c.data_size_list0[final_pos] as usize).saturating_sub(other_data_size)
+}
+
 struct AuthChainAContext {
     obfs: Option<*mut AuthChainA>, // back-reference
     has_sent_header: bool,
@@ -759,16 +786,22 @@ impl Protocol for AuthChainC {
 
 pub struct AuthChainD {
     inner: AuthChainA,
-    c_ctx: AuthChainCContext,
 }
 
 impl AuthChainD {
     pub fn new(server_info: ServerInfo) -> Self {
+        // C: auth_chain_d_new_obfs = auth_chain_c_new_obfs() + swap
+        // get_tcp_rand_len/salt; generic pre/post encrypt.
         let mut inner = AuthChainA::new(server_info.clone(), "auth_chain_d");
-        let c_ctx = Self::init_data_size(&server_info.key);
-        Self { inner, c_ctx }
+        inner.local.rand_len_fn = rand_len_d;
+        inner.local.rand_len_ctx.c = Some(Self::init_data_size(&server_info.key));
+        Self { inner }
     }
 
+    /// C: auth_chain_d_init_data_size + check_and_patch
+    /// (auth_chain.c:1317-1361): fill, sort, then keep appending
+    /// next()%2340%2040%1440 while the tail (unsorted append position) < 1300
+    /// and len < 64, re-sorting once at the end.
     fn init_data_size(key: &[u8]) -> AuthChainCContext {
         let mut random = Shift128plusCtx::from_bin(key);
         let list_len = (random.next() % (8 + 16) + (4 + 8)) as usize;
@@ -798,30 +831,9 @@ impl Protocol for AuthChainD {
     fn set_server_iv(&mut self, iv: Vec<u8>) { self.inner.set_server_iv(iv); }
 
     fn client_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
-        self.inner.init_user_key();
-        let mut result = Vec::new();
-        let mut data = plaindata;
-        let mut len = plaindata.len();
-        if len > 0 && !self.inner.local.has_sent_header {
-            let head_size = 1200.min(len);
-            let packed = self.inner.pack_auth_data(&data[..head_size]);
-            result.extend_from_slice(&packed);
-            data = &data[head_size..];
-            len -= head_size;
-            self.inner.local.has_sent_header = true;
-        }
-        while len > 2000 {
-            let packed = self.inner.pack_client_data(&data[..2000]);
-            result.extend_from_slice(&packed);
-            data = &data[2000..];
-            len -= 2000;
-        }
-        if len > 0 {
-            let packed = self.inner.pack_client_data(data);
-            result.extend_from_slice(&packed);
-        }
-        self.inner.local.last_data_len = plaindata.len();
-        Ok(result)
+        // Generic C path with the d variant's get_tcp_rand_len callback
+        // installed in new().
+        self.inner.client_pre_encrypt(plaindata)
     }
 
     fn client_post_decrypt(&mut self, data: &[u8]) -> SsrResult<Vec<u8>> {
