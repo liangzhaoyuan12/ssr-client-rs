@@ -89,6 +89,30 @@
   - 每组含: ASSOCIATE 应答 / IPv4 echo / 会话复用二连发 / domain 目标
 - 所有186 测试通过
 
-### 未开始
-- 无 —— GOALS.md 有序阶段 (AEAD → auth_sha1_v4 → auth_chain_a–f →
-  UDP relay) 全部完成
+### ✅ T1 测试资产入库（GOALS.md 新阶段，2026-09-22）
+- 旧的 UDP e2e 资产在 /tmp（会被清理），已入库:
+  - `tests/e2e/test_udp_e2e.py` — 参数化 SOCKS5 UDP 测试（环境变量
+    SOCKS_PORT/ECHO_PORT 注入；含 IPv4 echo、会话复用、domain 目标、
+    app-addr 响应头断言）
+  - `tools/e2e_udp.sh` — 自包含驱动脚本: mktemp 生成配置 → 起服务端/客户端
+    → 轮询端口 → 跑测试 → 清理；`--all` 跑三组已知良好组合
+- 修复: 本机 ss 不认 `-tcp` 长选项（只认 `-t`），wait_port 改用 `-lnt`/`-ulnt`
+- **验收**: `tools/e2e_udp.sh --all` → UDP_E2E_ALL_PASS，RC=0
+  - aes-256-cfb+auth_chain_a (18396/19912) ✓
+  - aes-256-cfb+auth_aes128_sha1 (18397/19913) ✓
+  - aes-128-gcm+origin (18398/19914) ✓
+- 注意: 第二组 teardown 时 C 服务端收到 SIGTERM 后段错误退出（bash 报
+  "段错误"），**测试已 PASS 之后**发生，属服务端退出路径噪音，非我方 bug；
+  记录备查
+
+### 进行中 / 未开始（GOALS.md T→Q→R→P→M）
+- [x] T1 测试资产入库（见上）
+- [ ] T2 边界与负面测试（`tests/full_coverage.rs` mod edge_cases）
+- [ ] T3 proptest 属性测试
+- [ ] T4 e2e 矩阵脚本（tools/matrix_test.py 已有雏形，需按 T4 组合策略补全）
+- [ ] T5 异常恢复 / T6 soak
+- [ ] Q1-Q10 代码质量（基线: 35 warning / 138 unwrap / 5 unsafe / 无 release profile）
+- [ ] R1-R6 运行占用（基线未测）
+- [ ] P1-P5 性能（无 benchmark）
+- [ ] M1-M5 主线合入（无 CI / CHANGELOG / LICENSE）
+- 门禁 G1-G12 见 GOALS.md；全绿才 push
