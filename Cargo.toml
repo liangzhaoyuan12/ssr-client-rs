@@ -2,9 +2,11 @@
 name = "ssr-client-rs"
 version = "0.1.0"
 edition = "2021"
+# MSRV floor: std::iter::repeat_n (1.82) is the newest std API used.
+rust-version = "1.82"
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["net", "rt-multi-thread", "macros", "io-util", "time", "sync", "signal"] }
 aes = "0.9"
 cipher = "0.5"
 rc4 = "0.2"
@@ -18,10 +20,8 @@ aes-gcm = "0.11"
 chacha20poly1305 = "0.11"
 md-5 = "0.10"
 sha1 = "0.10"
-sha2 = "0.10"
 hmac = "0.12"
 digest = "0.10"
-hkdf = "0.12"
 bytes = "1"
 base64 = "0.22"
 crc32fast = "1"
@@ -30,7 +30,6 @@ thiserror = "2"
 log = "0.4"
 
 [dev-dependencies]
-tokio-test = "0.4"
 hex = "0.4"
 proptest = "1.11.0"
 

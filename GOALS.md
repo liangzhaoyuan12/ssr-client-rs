@@ -231,7 +231,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
   - 所有 io::Error 传播带上下文（thiserror source 链完整）
   - 对外 API 不返回裸 `Box<dyn Error>`；确认 `SsrError` 变体覆盖全部路径
 
-- [ ] Q9 依赖审计
+- [x] Q9 依赖审计（移除 hkdf/tokio-test/sha2；tokio full→7 features；rust-version=1.82；cargo audit 0 漏洞，2026-09-23）
   - 移除未使用依赖（对照 grep 逐个确认: 检查 `hkdf`、`crc32fast`、`bytes`、`tokio-test` 等是否真被用到）
   - `tokio = "full"` 收窄为实际用的 features（net/rt-multi-thread/macros/io-util/time/sync/signal）
   - 加 `rust-version`（实际测得 MSRV 后填）；`cargo update` 后跑全测

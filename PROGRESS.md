@@ -429,3 +429,35 @@
 
 **门禁**: fmt 0、clippy -D rc=0、cargo test 237-0、panic 脚本 rc=0、
 `cargo doc --no-deps` 0、矩阵 39/51+12SKIP 0 FAIL、UDP e2e ALL_PASS、resilience 4/4
+
+### ✅ Q9 依赖审计（2026-09-23）
+
+**逐个 grep 确认后的处置**:
+- **移除 3 个未使用依赖**:
+  - `hkdf` —— 全库 0 引用（`aead.rs` 的 HKDF-SHA1 是基于 hmac_sha1 手写的，
+    doc 注释明说 "no extra crate feature is needed"）
+  - `tokio-test` —— 0 引用
+  - `sha2` —— 0 引用（SSR 协议族只用 MD5/SHA1/HMAC；grep 'Sha2|sha2' 全库空）
+- **保留（确认在用）**: aes/cipher/rc4/chacha20legacy/salsa20/blowfish/des/
+  cfb-mode/ctr/aes-gcm/chacha20poly1305/md-5/sha1/hmac/digest/bytes/
+  base64/crc32fast/rand/thiserror/log + dev: hex/proptest
+- **tokio features 收窄**: `full` →
+  `["net", "rt-multi-thread", "macros", "io-util", "time", "sync", "signal"]`
+  —— 按实际用到的模块统计（time 10、net 8、spawn/rt 6、io 6、select/macros、
+  sync 2、signal 2、join 2；#[tokio::main]/#[tokio::test] 需要 macros+rt）
+- **rust-version = "1.82"**: 实测所用最新 std API 为
+  `std::iter::repeat_n`（1.82 稳定，auth_aes128 PKCS7 pad + 2 测试）；
+  其余下位 API（let-else 1.65、is_some_and 未用）均低于此；本机 rustc 1.97.0
+- **cargo update**: 0 个包变更（"8 unchanged dependencies behind latest"
+  为 semver 兼容范围内的保守锁定，不盲目升大版本），跑全测 237/0
+- **cargo audit**（本机新装 cargo-audit，advisory-db 直连拉取成功）:
+  ```
+  Loaded 1264 security advisories
+  Scanning Cargo.lock for vulnerabilities (96 crate dependencies)
+  rc=0  → 0 vulnerabilities
+  ```
+  （proxychains4 路径对 git-over-https 反而失败，直连成功，记录备查）
+
+**回归全绿**: build/test 237-0、clippy -D rc=0、fmt 0、panic 脚本 rc=0、
+cargo doc 0、矩阵 39/51+12SKIP 0 FAIL、UDP e2e ALL_PASS、resilience 4/4、
+release 1,184,520 字节（移除依赖后 −44 字节）
