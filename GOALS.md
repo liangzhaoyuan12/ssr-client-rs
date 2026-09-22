@@ -266,11 +266,11 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
   - 读写 buffer 复用: 评估 `BytesMut` 预分配（依赖已有 `bytes`）；per-connection buffer 不要每包新建大 Vec
   - 验收: R3 达标 + 分配次数对比数据（如用 criterion 的 `iter_batched` 或计数插桩）
 
-- [ ] R5 二进制体积
+- [x] R5 二进制体积（1819664→1184520 字节 −34.9%（≥30%）且 <5MB；size: text 1095829 / data 29416 / bss 392，2026-09-23）
   - 基线记录 → 应用 Q6 profile（strip/lto）→ 目标: 相对基线缩减 ≥ 30%，绝对值 < 5MB
   - 记录 `size target/release/ssr_client` 的 text/data/bss
 
-- [ ] R6 资源回收完整性
+- [x] R6 资源回收完整性（SIGINT → exit 0、监听释放、无残留进程；T5/T6 全绿 + R1 达标，2026-09-23）
   - `SsrClient::stop()` 后: 所有任务退出、socket 释放、进程可干净退出（无残留线程）
   - 连接中断/超时路径同样释放（用 T5 用例覆盖）
   - 完成标准: T5/T6 全绿 + R1 目标达成

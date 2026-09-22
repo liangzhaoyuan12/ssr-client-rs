@@ -165,6 +165,7 @@ END=$((SECONDS + DURATION - WARMUP))
 while [ "$SECONDS" -lt "$END" ]; do
     sleep "$INTERVAL"
     S=$(sample "t+$((SECONDS))s")
+    echo "$S"
     R=${S#*rss_kb=}; R=${R%% *}
     [ "$R" -gt "$MAX_RSS" ] && MAX_RSS=$R
 done

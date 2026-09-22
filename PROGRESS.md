@@ -528,3 +528,37 @@ FD_LEAK_PASS tcp=500 udp=100 baseline=11   rc=0
 - 与 T6 soak 断言（600s fd 11→11）、T5 resilience 互补，共同覆盖
   GOALS "纳入 T5/T6 断言"要求
 - 跑法: `bash tools/fd_leak_test.sh`（依赖 /opt/ssr/ssr-server、curl）
+
+### ✅ R5 二进制体积（2026-09-23）
+
+| 阶段 | 字节数 | 说明 |
+|---|---|---|
+| 基线（Q6 profile 前） | **1,819,664** | 默认 release（无 LTO/strip） |
+| Q6 profile 后 | **1,184,520** | thin LTO + CGU=1 + strip=symbols |
+| **缩减** | **−635,144 = −34.9%** | 目标 ≥30% ✅，绝对值 1.13MB < 5MB ✅ |
+
+- `size target/release/ssr_client`（GOALS 要求记录 text/data/bss）:
+  ```
+  text     data     bss       dec       hex     filename
+  1095829  29416    392       1125637   112d05  target/release/ssr_client
+  ```
+  文件 1,184,520 字节（含 ELF 头/对齐），text+data+bss=1,125,637
+- ELF: LoongArch64 PIE, dynamically linked（`file` 确认）
+
+### ✅ R6 资源回收完整性（2026-09-23）
+
+**完成标准三项**: T5 全绿（resilience 4/4）✅ + T6 全绿（soak
+SOAK_PASS，fd 11→11）✅ + R1 达标（RSS 3488KB/线程5/CPU 0%）✅
+
+**stop() 干净退出实测**（release + hk.json）:
+```
+before_sigint: pid=… threads=5 fd=11
+kill -INT → exited=yes exit_code=0
+after: leftover_proc=no listeners_1080=0   → R6_STOP_CLEAN
+```
+- 进程 **exit 0**（非信号杀死）→ `ctrl_c` handler 调 `client_ref.stop()`
+  → Notify 广播 → accept 循环退出 → 主函数自然返回
+- 端口 1080 监听释放、无残留进程/线程（进程整体退出）
+- 连接中断/超时路径的释放由 T5 用例覆盖（kill -9 恢复、idle 回收、
+  半关闭 FIN 传播，4/4 绿）
+- 附带验证 Q8 修复生效: ctrl-c 等待失败会打印而非静默（此处无失败）
