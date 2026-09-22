@@ -252,7 +252,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
   - 记录: 空闲 RSS、线程数、fd 数、`top -b -n2` 空闲 CPU
   - 目标: **空闲 RSS ≤ 20MB、线程数 ≤ CPU核数+4、空闲 CPU = 0%、fd = 基线（3 TCP/UDP 相关 + stdio）**
 
-- [ ] R2 fd 泄漏测试
+- [x] R2 fd 泄漏测试（tools/fd_leak_test.sh：500 TCP 回基线、100 UDP 会话淘汰回基线，三跑全过，2026-09-23）
   - 循环 500 次: 建 TCP 连接经代理传输后关闭；结束后 fd 数回到基线
   - UDP: 建 100 个会话，等 `udp_timeout` 过期后会话表清空、fd 回落（验证 udp_relay 淘汰逻辑）
   - 纳入 T5/T6 断言

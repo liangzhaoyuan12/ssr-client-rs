@@ -502,3 +502,29 @@ release 1,184,520 字节（移除依赖后 −44 字节）
 - 与 T6 期基线（3616KB）同量级，Q6 LTO+strip 后略降 128KB
 - **R3 目标随之锚定**: 600s 负载增长 ≤10MB（T6 已实测 +784KB，见上）
 - 该基线为 R2 fd 泄漏、R6 回收完整性的对比基准（fd=11、RSS=3488KB）
+
+### ✅ R2 fd 泄漏测试（2026-09-23）
+
+**新脚本 `tools/fd_leak_test.sh`**（R2 门禁，可重复跑，失败留日志）:
+- TCP: 本地 HTTP 源（64KB blob）× **500 次** connect→transfer→close 过
+  SOCKS5 代理，断言结束后 client fd **== 基线 11**
+- UDP: 单 app socket 向 relay 发 **100 个不同目标端口**的数据报
+  （SessionKey=(源地址,目标字节) → 恰好 100 个会话），断言:
+  1. 峰值 fd = 基线+100（会话创建 100% 可见）
+  2. 等 `udp_timeout`+6s 后 fd **回落 == 11**（udp_relay 淘汰逻辑清空会话表）
+- Env 旋钮: TCP_CYCLES / UDP_SESSIONS / UDP_TIMEOUT（冒烟用小值）
+
+**正式跑（默认 500/100/4s）结果，连续 3 次全过**:
+```
+baseline_fd=11
+tcp_cycles=500 failures=0
+after_tcp_fd=11 (== baseline 11) PASS
+sent=100
+peak_fd=111 (baseline 11, delta +100)      ← 每会话恰 1 fd
+after_udp_fd=11 (== baseline 11) PASS      ← 淘汰后精确回基线
+FD_LEAK_PASS tcp=500 udp=100 baseline=11   rc=0
+```
+- 冒烟（20/10/3s）2 次亦全过
+- 与 T6 soak 断言（600s fd 11→11）、T5 resilience 互补，共同覆盖
+  GOALS "纳入 T5/T6 断言"要求
+- 跑法: `bash tools/fd_leak_test.sh`（依赖 /opt/ssr/ssr-server、curl）
