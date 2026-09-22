@@ -157,7 +157,10 @@ impl UdpRelay {
         // SS request = the datagram without RSV/FRAG (C: buffer_shortened_to(3)).
         let ss_payload = &data[3..];
         let framed = {
-            let mut proto = self.protocol.lock().unwrap();
+            let mut proto = self
+                .protocol
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             match proto.udp_pre_encrypt(ss_payload) {
                 Ok(f) => f,
                 Err(e) => {
@@ -189,7 +192,10 @@ impl UdpRelay {
         if let Err(e) = sock.send_to(&enc, self.server).await {
             ssr_debug!("[udp] send to server failed: {e}");
             // Stale session — drop it so the next datagram recreates one.
-            self.sessions.lock().unwrap().remove(&key);
+            self.sessions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&key);
         }
     }
 
@@ -198,11 +204,22 @@ impl UdpRelay {
         key: &SessionKey,
         app: SocketAddr,
     ) -> Option<Arc<UdpSocket>> {
-        if let Some(s) = self.sessions.lock().unwrap().get(key) {
+        if let Some(s) = self
+            .sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(key)
+        {
             s.last_seen.store(now_ms(), Ordering::Relaxed);
             return Some(s.sock.clone());
         }
-        if self.sessions.lock().unwrap().len() >= MAX_UDP_CONN_NUM {
+        if self
+            .sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
+            >= MAX_UDP_CONN_NUM
+        {
             ssr_debug!("[udp] too many sessions, dropping");
             return None;
         }
@@ -220,7 +237,10 @@ impl UdpRelay {
         };
         let last_seen = Arc::new(AtomicU64::new(now_ms()));
         {
-            let mut map = self.sessions.lock().unwrap();
+            let mut map = self
+                .sessions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(s) = map.get(key) {
                 // Created concurrently — reuse the winner.
                 return Some(s.sock.clone());
@@ -279,7 +299,9 @@ fn spawn_session_task(
                         }
                     };
                     let payload = {
-                        let mut proto = protocol.lock().unwrap();
+                        let mut proto = protocol
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         match proto.udp_post_decrypt(&plain) {
                             Ok(p) if !p.is_empty() => p,
                             Ok(_) => {
@@ -309,7 +331,10 @@ fn spawn_session_task(
                 }
                 Ok(Err(e)) => {
                     ssr_debug!("[udp] session recv error: {e}");
-                    sessions.lock().unwrap().remove(&key);
+                    sessions
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .remove(&key);
                     break;
                 }
                 Err(_) => {
@@ -321,7 +346,10 @@ fn spawn_session_task(
                         continue;
                     }
                     ssr_debug!("[udp] session {} idle, removed", key.0);
-                    sessions.lock().unwrap().remove(&key);
+                    sessions
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .remove(&key);
                     break;
                 }
             }

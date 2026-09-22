@@ -111,7 +111,7 @@ pub enum DecryptContext {
     Aead(Box<AeadDecryptCtx>),
 }
 
-fn encrypt_in_place(ctx: &mut EncryptContext, output: &mut [u8]) {
+fn encrypt_in_place(ctx: &mut EncryptContext, output: &mut [u8]) -> SsrResult<()> {
     match ctx {
         EncryptContext::None | EncryptContext::Table => {}
         EncryptContext::RC4 { cipher } => {
@@ -152,11 +152,16 @@ fn encrypt_in_place(ctx: &mut EncryptContext, output: &mut [u8]) {
         }
         // Handled in `encrypt_ctx`: AEAD changes the length, so it cannot be
         // transformed in place.
-        EncryptContext::Aead(_) => unreachable!("AEAD is handled in encrypt_ctx"),
+        EncryptContext::Aead(_) => {
+            return Err(SsrError::Crypto(
+                "AEAD is handled in encrypt_ctx".to_string(),
+            ));
+        }
     }
+    Ok(())
 }
 
-fn decrypt_in_place(ctx: &mut DecryptContext, output: &mut [u8]) {
+fn decrypt_in_place(ctx: &mut DecryptContext, output: &mut [u8]) -> SsrResult<()> {
     match ctx {
         DecryptContext::None | DecryptContext::Table => {}
         DecryptContext::RC4 { cipher } => {
@@ -195,8 +200,13 @@ fn decrypt_in_place(ctx: &mut DecryptContext, output: &mut [u8]) {
         DecryptContext::ChaCha20Legacy { cipher } => {
             cipher.apply_keystream(output);
         }
-        DecryptContext::Aead(_) => unreachable!("AEAD is handled in decrypt_ctx"),
+        DecryptContext::Aead(_) => {
+            return Err(SsrError::Crypto(
+                "AEAD is handled in decrypt_ctx".to_string(),
+            ));
+        }
     }
+    Ok(())
 }
 
 pub struct CipherEnv {
@@ -243,7 +253,9 @@ impl CipherEnv {
                 // enc_get_key_len()/enc_get_iv_len() report an empty key and a
                 // zero IV to the obfs and protocol layers. Keep the master key
                 // private to this module for HKDF.
-                let key_len = AeadCipher::key_len_of(m).expect("checked by is_aead");
+                let key_len = AeadCipher::key_len_of(m).ok_or_else(|| {
+                    SsrError::InvalidCipherMethod("missing AEAD key length".to_string())
+                })?;
                 let master = bytes_to_key(password.as_bytes(), key_len);
                 Ok(Self {
                     method,
@@ -405,7 +417,7 @@ impl CipherEnv {
             });
         }
         let mut output = plaintext.to_vec();
-        encrypt_in_place(ctx, &mut output);
+        encrypt_in_place(ctx, &mut output)?;
         Ok(output)
     }
 
@@ -523,7 +535,7 @@ impl CipherEnv {
             });
         }
         let mut output = ciphertext.to_vec();
-        decrypt_in_place(ctx, &mut output);
+        decrypt_in_place(ctx, &mut output)?;
         Ok(output)
     }
 

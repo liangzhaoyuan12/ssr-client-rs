@@ -40,7 +40,11 @@ pub fn sha1(data: &[u8]) -> [u8; 20] {
 
 /// HMAC-MD5
 pub fn hmac_md5(key: &[u8], data: &[u8]) -> [u8; 16] {
-    let mut mac = HmacMD5::new_from_slice(key).expect("HMAC-MD5 key length");
+    let Ok(mut mac) = HmacMD5::new_from_slice(key) else {
+        // hmac-0.12 accepts any key length, so this arm is unreachable.
+        debug_assert!(false, "hmac-0.12 accepts any key length");
+        return [0u8; 16];
+    };
     mac.update(data);
     let result = mac.finalize().into_bytes();
     let mut out = [0u8; 16];
@@ -50,7 +54,11 @@ pub fn hmac_md5(key: &[u8], data: &[u8]) -> [u8; 16] {
 
 /// HMAC-SHA1
 pub fn hmac_sha1(key: &[u8], data: &[u8]) -> [u8; 20] {
-    let mut mac = HmacSHA1::new_from_slice(key).expect("HMAC-SHA1 key length");
+    let Ok(mut mac) = HmacSHA1::new_from_slice(key) else {
+        // hmac-0.12 accepts any key length, so this arm is unreachable.
+        debug_assert!(false, "hmac-0.12 accepts any key length");
+        return [0u8; 20];
+    };
     mac.update(data);
     let result = mac.finalize().into_bytes();
     let mut out = [0u8; 20];
@@ -60,7 +68,11 @@ pub fn hmac_sha1(key: &[u8], data: &[u8]) -> [u8; 20] {
 
 /// HMAC-SHA1 with multiple data slices
 pub fn hmac_sha1_multi(key: &[u8], data: &[&[u8]]) -> [u8; 20] {
-    let mut mac = HmacSHA1::new_from_slice(key).expect("HMAC-SHA1 key length");
+    let Ok(mut mac) = HmacSHA1::new_from_slice(key) else {
+        // hmac-0.12 accepts any key length, so this arm is unreachable.
+        debug_assert!(false, "hmac-0.12 accepts any key length");
+        return [0u8; 20];
+    };
     for d in data {
         mac.update(d);
     }
@@ -72,7 +84,11 @@ pub fn hmac_sha1_multi(key: &[u8], data: &[&[u8]]) -> [u8; 20] {
 
 /// HMAC-MD5 with multiple data slices
 pub fn hmac_md5_multi(key: &[u8], data: &[&[u8]]) -> [u8; 16] {
-    let mut mac = HmacMD5::new_from_slice(key).expect("HMAC-MD5 key length");
+    let Ok(mut mac) = HmacMD5::new_from_slice(key) else {
+        // hmac-0.12 accepts any key length, so this arm is unreachable.
+        debug_assert!(false, "hmac-0.12 accepts any key length");
+        return [0u8; 16];
+    };
     for d in data {
         mac.update(d);
     }

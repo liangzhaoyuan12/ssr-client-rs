@@ -1,6 +1,6 @@
 use super::{memintcopy_lt, GlobalData, Protocol, ServerInfo, XorShift128Plus};
 use crate::crypto::bytes_to_key::bytes_to_key;
-use crate::error::SsrResult;
+use crate::error::{SsrError, SsrResult};
 use crate::utils::base64::b64encode;
 use crate::utils::hash::{hmac_md5, hmac_sha1, md5, sha1};
 
@@ -182,7 +182,7 @@ impl AuthAES128 {
         self.server_info.iv = iv;
     }
 
-    fn pack_auth_data(&mut self, data: &[u8]) -> Vec<u8> {
+    fn pack_auth_data(&mut self, data: &[u8]) -> SsrResult<Vec<u8>> {
         self.init_user_key();
 
         // C code auth_aes128_sha1_pack_auth_data line 1084:
@@ -234,7 +234,7 @@ impl AuthAES128 {
         let enc_key = bytes_to_key(enc_key_input.as_bytes(), 16);
 
         // AES-128-CBC encrypt (C encrypt.c:744 encrypts encrypt[0..16]: t+client_id+conn_id+sizes)
-        let encrypted = aes_128_cbc_encrypt(&enc_key, &encrypt[0..16]);
+        let encrypted = aes_128_cbc_encrypt(&enc_key, &encrypt[0..16])?;
         encrypt[4..20].copy_from_slice(&encrypted[..16]);
         encrypt[0..4].copy_from_slice(&self.uid);
 
@@ -257,12 +257,12 @@ impl AuthAES128 {
         let hash = (self.hmac_fn)(&self.user_key, &out[..out_size - 4]);
         out[out_size - 4..].copy_from_slice(&hash[..4]);
 
-        out
+        Ok(out)
     }
 }
 
 /// Simple AES-128-CBC encrypt (PKCS7 padding)
-pub(crate) fn aes_128_cbc_encrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
+pub(crate) fn aes_128_cbc_encrypt(key: &[u8], data: &[u8]) -> SsrResult<Vec<u8>> {
     use aes::cipher::{BlockCipherEncrypt, KeyInit};
     type Aes128Enc = aes::Aes128;
 
@@ -272,7 +272,8 @@ pub(crate) fn aes_128_cbc_encrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
     let mut padded = data.to_vec();
     padded.extend(std::iter::repeat_n(pad_len as u8, pad_len));
 
-    let cipher = Aes128Enc::new_from_slice(key).unwrap();
+    let cipher = Aes128Enc::new_from_slice(key)
+        .map_err(|_| SsrError::Crypto(format!("aes-128: bad key length {}", key.len())))?;
     let mut iv = [0u8; 16];
     let mut output = Vec::with_capacity(padded.len());
 
@@ -287,15 +288,16 @@ pub(crate) fn aes_128_cbc_encrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
         output.extend_from_slice(&block_arr);
     }
 
-    output
+    Ok(output)
 }
 
 /// Simple AES-128-CBC decrypt (remove PKCS7 padding)
-pub fn aes_128_cbc_decrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
+pub fn aes_128_cbc_decrypt(key: &[u8], data: &[u8]) -> SsrResult<Vec<u8>> {
     use aes::cipher::{BlockCipherDecrypt, KeyInit};
     type Aes128Dec = aes::Aes128;
 
-    let cipher = Aes128Dec::new_from_slice(key).unwrap();
+    let cipher = Aes128Dec::new_from_slice(key)
+        .map_err(|_| SsrError::Crypto(format!("aes-128: bad key length {}", key.len())))?;
     let mut iv = [0u8; 16];
     let mut output = Vec::with_capacity(data.len());
 
@@ -322,7 +324,7 @@ pub fn aes_128_cbc_decrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
             output.truncate(new_len);
         }
     }
-    output
+    Ok(output)
 }
 
 impl Protocol for AuthAES128 {
@@ -354,7 +356,7 @@ impl Protocol for AuthAES128 {
 
         if len > 0 && !self.has_sent_header {
             let head_size = 1200.min(len);
-            let packed = self.pack_auth_data(&data[..head_size]);
+            let packed = self.pack_auth_data(&data[..head_size])?;
             result.extend_from_slice(&packed);
             data = &data[head_size..];
             len -= head_size;
@@ -504,8 +506,8 @@ mod tests {
     fn test_aes_128_cbc_roundtrip() {
         let key = [0x42u8; 16];
         let data = b"hello aes cbc!";
-        let encrypted = aes_128_cbc_encrypt(&key, data);
-        let decrypted = aes_128_cbc_decrypt(&key, &encrypted);
+        let encrypted = aes_128_cbc_encrypt(&key, data).unwrap();
+        let decrypted = aes_128_cbc_decrypt(&key, &encrypted).unwrap();
         assert_eq!(decrypted, data);
     }
 }

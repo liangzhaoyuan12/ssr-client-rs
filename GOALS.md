@@ -198,7 +198,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
   - `cargo fmt --all`，diff 里只允许纯格式变化
   - 完成标准: `cargo fmt --all -- --check` exit 0；fmt 后立即 `cargo test` 全绿
 
-- [ ] Q4 生产路径 panic 清零
+- [x] Q4 生产路径 panic 清零（基线 39 → `tools/check_panic_paths.sh` rc=0，白名单 0 条，2026-09-23）
   - 写 `tools/check_panic_paths.sh`: grep src 下 `unwrap()/expect()/panic!/unreachable!`，排除 `#[cfg(test)]` 块与 `src/bin/`（bin 允许 fail-fast）
   - 分拣当前 138 处 → 生产路径逐处改造: 网络数据路径返回 `SsrError`；逻辑上不可达的用 `unreachable!` 换成带信息的 `SsrError::Internal` 或 `debug_assert` + 保守分支
   - 例外白名单写进脚本顶部（每条附一行理由），白名单条目数只减不增

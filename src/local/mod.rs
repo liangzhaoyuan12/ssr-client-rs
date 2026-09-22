@@ -300,9 +300,8 @@ impl ObfsRelay {
                                 let (dctx, data) = self
                                     .cipher_env
                                     .create_decrypt_ctx_from_ciphertext(&decrypted_obfs)?;
-                                self.decrypt_ctx = Some(dctx);
-                                self.cipher_env
-                                    .decrypt_ctx(self.decrypt_ctx.as_mut().unwrap(), &data)?
+                                let dctx_slot = self.decrypt_ctx.insert(dctx);
+                                self.cipher_env.decrypt_ctx(dctx_slot, &data)?
                             };
                             let decoded = self.protocol.client_post_decrypt(&decrypted_cipher)?;
                             if !decoded.is_empty() {
@@ -347,8 +346,8 @@ impl ObfsRelay {
                                                 self.cipher_env.decrypt_ctx(dctx, &decrypted_obfs)?
                                             } else {
                                                 let (dctx, data) = self.cipher_env.create_decrypt_ctx_from_ciphertext(&decrypted_obfs)?;
-                                                self.decrypt_ctx = Some(dctx);
-                                                self.cipher_env.decrypt_ctx(self.decrypt_ctx.as_mut().unwrap(), &data)?
+                                                let dctx_slot = self.decrypt_ctx.insert(dctx);
+                                                self.cipher_env.decrypt_ctx(dctx_slot, &data)?
                                             };
                                             let decoded = self.protocol.client_post_decrypt(&decrypted_cipher)?;
                                             if !decoded.is_empty() {
@@ -405,8 +404,8 @@ impl ObfsRelay {
                             } else {
                                 // First message: read IV from ciphertext, create context
                                 let (dctx, data) = self.cipher_env.create_decrypt_ctx_from_ciphertext(&decrypted_obfs)?;
-                                self.decrypt_ctx = Some(dctx);
-                                self.cipher_env.decrypt_ctx(self.decrypt_ctx.as_mut().unwrap(), &data)?
+                                let dctx_slot = self.decrypt_ctx.insert(dctx);
+                                self.cipher_env.decrypt_ctx(dctx_slot, &data)?
                             };
                             ssr_debug!("[relay] Decrypted: {} bytes", decrypted_cipher.len());
                             // Protocol: unwrap framing

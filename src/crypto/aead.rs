@@ -286,7 +286,10 @@ impl AeadEncryptCtx {
         if plaintext.is_empty() {
             return Ok(out);
         }
-        let cipher = self.cipher.as_ref().expect("set above");
+        let cipher = self
+            .cipher
+            .as_ref()
+            .ok_or_else(|| SsrError::Crypto("AEAD cipher not initialised".to_string()))?;
         let mut off = 0usize;
         while off < plaintext.len() {
             let n = (plaintext.len() - off).min(CHUNK_SIZE_MASK);
@@ -348,7 +351,10 @@ impl AeadDecryptCtx {
             )?);
             self.init = true;
         }
-        let cipher = self.cipher.as_ref().expect("set above");
+        let cipher = self
+            .cipher
+            .as_ref()
+            .ok_or_else(|| SsrError::Crypto("AEAD cipher not initialised".to_string()))?;
         let mut out = Vec::new();
         loop {
             // Need the length block plus at least one payload byte.

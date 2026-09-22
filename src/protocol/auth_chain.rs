@@ -25,8 +25,9 @@ impl Shift128plusCtx {
         let mut fill = [0u8; 16];
         fill[..data.len().min(16)].copy_from_slice(&data[..data.len().min(16)]);
         let mut ctx = Self::new();
-        ctx.v[0] = u64::from_le_bytes(fill[0..8].try_into().unwrap());
-        ctx.v[1] = u64::from_le_bytes(fill[8..16].try_into().unwrap());
+        let [w0, w1, w2, w3, w4, w5, w6, w7, w8, w9, w10, w11, w12, w13, w14, w15] = fill;
+        ctx.v[0] = u64::from_le_bytes([w0, w1, w2, w3, w4, w5, w6, w7]);
+        ctx.v[1] = u64::from_le_bytes([w8, w9, w10, w11, w12, w13, w14, w15]);
         ctx
     }
 
@@ -37,8 +38,9 @@ impl Shift128plusCtx {
         fill[0] = datalen as u8;
         fill[1] = (datalen >> 8) as u8;
         let mut ctx = Self::new();
-        ctx.v[0] = u64::from_le_bytes(fill[0..8].try_into().unwrap());
-        ctx.v[1] = u64::from_le_bytes(fill[8..16].try_into().unwrap());
+        let [w0, w1, w2, w3, w4, w5, w6, w7, w8, w9, w10, w11, w12, w13, w14, w15] = fill;
+        ctx.v[0] = u64::from_le_bytes([w0, w1, w2, w3, w4, w5, w6, w7]);
+        ctx.v[1] = u64::from_le_bytes([w8, w9, w10, w11, w12, w13, w14, w15]);
         for _ in 0..4 {
             ctx.next_u64();
         }
@@ -61,12 +63,13 @@ impl Shift128plusCtx {
 /// One-shot RC4 (C: `cipher_simple_update_data(password, "rc4", …)` — fresh
 /// context per call, `bytes_to_key(password, 16)`, IV length 0 so no IV).
 /// RC4 is symmetric, so the same fn encrypts and decrypts.
-fn rc4_once(password: &str, data: &[u8]) -> Vec<u8> {
+fn rc4_once(password: &str, data: &[u8]) -> SsrResult<Vec<u8>> {
     let key = bytes_to_key(password.as_bytes(), 16);
-    let mut ctx = <rc4::Rc4 as KeyInit>::new_from_slice(&key).expect("rc4 key");
+    let mut ctx = <rc4::Rc4 as KeyInit>::new_from_slice(&key)
+        .map_err(|_| SsrError::Crypto(format!("rc4: invalid key length {}", key.len())))?;
     let mut out = data.to_vec();
     ctx.apply_keystream(&mut out);
-    out
+    Ok(out)
 }
 
 // ==================== Auth Chain A ====================
@@ -140,10 +143,11 @@ fn rand_len_b(
         return 0;
     }
     *random = Shift128plusCtx::from_bin_datalen(last_hash, datalength);
-    let b = ctx
-        .b
-        .as_ref()
-        .expect("auth_chain_b: missing data_size_list context");
+    let Some(b) = ctx.b.as_ref() else {
+        // Wired by the variant's new() — unreachable; 0 = no padding if missing.
+        debug_assert!(false, "auth_chain_b: missing data_size_list context");
+        return 0;
+    };
     let overhead = ctx.overhead as usize;
 
     let pos = find_pos(&b.data_size_list, (datalength + overhead) as i32);
@@ -183,10 +187,11 @@ fn rand_len_c(
     datalength: usize,
 ) -> usize {
     let overhead = ctx.overhead as usize;
-    let c = ctx
-        .c
-        .as_ref()
-        .expect("auth_chain_c: missing data_size_list0 context");
+    let Some(c) = ctx.c.as_ref() else {
+        // Wired by the variant's new() — unreachable; 0 = no padding if missing.
+        debug_assert!(false, "auth_chain_c: missing data_size_list0 context");
+        return 0;
+    };
     let other_data_size = datalength + overhead;
 
     *random = Shift128plusCtx::from_bin_datalen(last_hash, datalength);
@@ -223,10 +228,11 @@ fn rand_len_d(
     datalength: usize,
 ) -> usize {
     let overhead = ctx.overhead as usize;
-    let c = ctx
-        .c
-        .as_ref()
-        .expect("auth_chain_d: missing data_size_list0 context");
+    let Some(c) = ctx.c.as_ref() else {
+        // Wired by the variant's new() — unreachable; 0 = no padding if missing.
+        debug_assert!(false, "auth_chain_d: missing data_size_list0 context");
+        return 0;
+    };
     let other_data_size = datalength + overhead;
 
     // if other_data_size > the biggest item in data_size_list0, no padding
@@ -253,10 +259,11 @@ fn rand_len_e(
     *random = Shift128plusCtx::from_bin_datalen(last_hash, datalength);
 
     let overhead = ctx.overhead as usize;
-    let c = ctx
-        .c
-        .as_ref()
-        .expect("auth_chain_e: missing data_size_list0 context");
+    let Some(c) = ctx.c.as_ref() else {
+        // Wired by the variant's new() — unreachable; 0 = no padding if missing.
+        debug_assert!(false, "auth_chain_e: missing data_size_list0 context");
+        return 0;
+    };
     let other_data_size = datalength + overhead;
 
     if other_data_size >= c.data_size_list0[c.data_size_list0.len() - 1] as usize {
@@ -420,7 +427,7 @@ impl AuthChainA {
         let rand_len = Self::udp_rand_len(&mut self.local.random_client, &md5data);
         // auth_chain_a_encryptor(true, "rc4", user_key, md5data, plain)
         let mixed_key = format!("{}{}", b64encode(&self.local.user_key), b64encode(&md5data));
-        let mut out = rc4_once(&mixed_key, plaindata);
+        let mut out = rc4_once(&mixed_key, plaindata)?;
         let mut rnd = vec![0u8; rand_len];
         rand::thread_rng().fill_bytes(&mut rnd);
         out.extend_from_slice(&rnd);
@@ -453,18 +460,19 @@ impl AuthChainA {
         }
         let outlength = data.len() - rand_len - 8;
         let password = format!("{}{}", b64encode(&self.local.user_key), b64encode(&hash));
-        Ok(rc4_once(&password, &data[..outlength]))
+        rc4_once(&password, &data[..outlength])
     }
 
-    fn init_rc4(&mut self, password: &str) {
+    fn init_rc4(&mut self, password: &str) -> SsrResult<()> {
         // Derive RC4 key using EVP_BytesToKey (same as cipher_env_new_instance)
         let key = bytes_to_key(password.as_bytes(), 16); // RC4 key size is 16
-        let enc =
-            <rc4::Rc4 as KeyInit>::new_from_slice(&key).expect("RC4 key init should not fail");
-        let dec =
-            <rc4::Rc4 as KeyInit>::new_from_slice(&key).expect("RC4 key init should not fail");
+        let enc = <rc4::Rc4 as KeyInit>::new_from_slice(&key)
+            .map_err(|_| SsrError::Crypto(format!("rc4: invalid key length {}", key.len())))?;
+        let dec = <rc4::Rc4 as KeyInit>::new_from_slice(&key)
+            .map_err(|_| SsrError::Crypto(format!("rc4: invalid key length {}", key.len())))?;
         self.local.encrypt_ctx = Some(enc);
         self.local.decrypt_ctx = Some(dec);
+        Ok(())
     }
 
     fn encrypt_buffer(&mut self, data: &[u8]) -> Vec<u8> {
@@ -525,7 +533,7 @@ impl AuthChainA {
         out
     }
 
-    fn pack_auth_data(&mut self, data: &[u8]) -> Vec<u8> {
+    fn pack_auth_data(&mut self, data: &[u8]) -> SsrResult<Vec<u8>> {
         // C auth_chain_a_pack_auth_data format (auth_chain.c:486-598):
         // [random(4)] [HMAC-MD5(8)] [UID(4)] [AES-CBC encrypted block(16)] [HMAC-MD5(4)] [pack_client_data(data)]
         // Total header: 4 + 8 + 4 + 16 + 4 = 36 bytes, then data packet follows
@@ -576,7 +584,8 @@ impl AuthChainA {
         let enc_key = bytes_to_key(enc_key_input.as_bytes(), 16);
 
         // AES-CBC encrypt with zero IV, no padding (matching C ss_aes_128_cbc_encrypt)
-        let cipher = Aes128Enc::new_from_slice(&enc_key).unwrap();
+        let cipher = Aes128Enc::new_from_slice(&enc_key)
+            .map_err(|_| SsrError::Crypto(format!("aes-128: bad key length {}", enc_key.len())))?;
         let iv = [0u8; 16];
         // XOR plaintext with zero IV (first block only, CBC mode)
         let mut block = [0u8; 16];
@@ -608,14 +617,14 @@ impl AuthChainA {
             b64encode(&self.local.user_key),
             b64encode(&self.local.last_client_hash)
         );
-        self.init_rc4(&password);
+        self.init_rc4(&password)?;
 
         // Pack data as a data packet (matching C auth_chain_a_pack_client_data)
         // The C code appends auth_chain_a_pack_client_data after the auth header
         let client_data_packet = self.pack_client_data(data);
         out.extend_from_slice(&client_data_packet);
 
-        out
+        Ok(out)
     }
 
     fn client_pre_encrypt_inner(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
@@ -625,7 +634,7 @@ impl AuthChainA {
 
         if len > 0 && !self.local.has_sent_header {
             let head_size = 1200.min(len);
-            let packed = self.pack_auth_data(&data[..head_size]);
+            let packed = self.pack_auth_data(&data[..head_size])?;
             result.extend_from_slice(&packed);
             data = &data[head_size..];
             len -= head_size;

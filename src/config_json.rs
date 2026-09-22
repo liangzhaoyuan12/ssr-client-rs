@@ -101,7 +101,7 @@ impl<'a> Parser<'a> {
         self.bytes.get(self.pos).copied()
     }
 
-    fn expect(&mut self, c: u8) -> Result<(), String> {
+    fn expect_byte(&mut self, c: u8) -> Result<(), String> {
         if self.peek() == Some(c) {
             self.pos += 1;
             Ok(())
@@ -148,7 +148,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_string(&mut self) -> Result<String, String> {
-        self.expect(b'"')?;
+        self.expect_byte(b'"')?;
         let mut out = String::new();
         while let Some(c) = self.bytes.get(self.pos).copied() {
             self.pos += 1;
@@ -203,7 +203,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_arr(&mut self) -> Result<Json, String> {
-        self.expect(b'[')?;
+        self.expect_byte(b'[')?;
         let mut items = Vec::new();
         if self.peek() == Some(b']') {
             self.pos += 1;
@@ -225,7 +225,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_obj(&mut self) -> Result<Json, String> {
-        self.expect(b'{')?;
+        self.expect_byte(b'{')?;
         let mut fields = Vec::new();
         if self.peek() == Some(b'}') {
             self.pos += 1;
@@ -233,7 +233,7 @@ impl<'a> Parser<'a> {
         }
         loop {
             let key = self.parse_string()?;
-            self.expect(b':')?;
+            self.expect_byte(b':')?;
             let val = self.parse_value()?;
             fields.push((key, val));
             match self.peek() {

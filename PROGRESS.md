@@ -289,3 +289,33 @@
 - **回归全绿**: `cargo build` 0 warning 0 error、`cargo test` **237/0**、
   `clippy --all-targets -- -D warnings` rc=0、release 0 warning、
   矩阵 39/51+12SKIP 0 FAIL、UDP e2e ALL_PASS、resilience 4/4
+
+### ✅ Q4 生产路径 panic 清零（2026-09-23）
+
+- **门禁脚本**: `tools/check_panic_paths.sh` — 扫 src/ 下
+  `unwrap()/expect()/panic!/unreachable!`，awk 排除首个 `#[cfg(test)]`
+  之后的测试块与 `src/bin/`（bin 允许 fail-fast）；白名单机制就位但
+  **0 条**——全部逐处改造，没有留任何例外
+- **基线 39 → 0**（GOALS 写的 138 是把测试/误报一起数了；真实生产路径 39 处），
+  分 6 类:
+  1. `config_json.rs` 解析器方法名 `fn expect` 假阳性 ×5 → 改名 `expect_byte`
+  2. `local/mod.rs` `decrypt_ctx.as_mut().unwrap()` ×3 → `Option::insert()` 返回值
+  3. `aead.rs` "set above" ×2 + `cipher_env.rs` key_len ×1 → `ok_or_else(SsrError)?`
+  4. `cipher_env.rs` `unreachable!` ×2 → `encrypt_in_place/decrypt_in_place`
+     改返 `SsrResult<()>`，AEAD 分支返回 `SsrError::Crypto`（调用点加 `?`）
+  5. `utils/hash.rs` HMAC expect ×4 → `let Ok(...) else` + `debug_assert!` +
+     返回全零 MAC（hmac-0.12 接受任意 key 长度，else 分支不可达）
+  6. 结构性转 Result（网络数据路径返回 SsrError）:
+     - `auth_chain.rs`: `rc4_once`/`init_rc4`/`pack_auth_data` → SsrResult；
+       `new_from_slice().expect` ×3 → `map_err(SsrError::Crypto)?`；
+       AES `unwrap` ×1 → `map_err?`；4 个 `rand_len_*.expect` →
+       `let Some(..) else` + `debug_assert!` + `return 0`（与 datalength≥1440
+       分支同义：无 padding）；`from_bin` try_into×4 → 数组解构（长度编译期固定）
+     - `auth_aes128.rs`: `aes_128_cbc_encrypt/decrypt` → SsrResult（`map_err?`），
+       `pack_auth_data` → SsrResult，测试调用点补 `.unwrap()`
+     - `udp_relay.rs`: Mutex `lock().unwrap()` ×8 →
+       `unwrap_or_else(PoisonError::into_inner)`（毒化恢复，单线程事件循环内
+       不会实际发生，但消除 panic 点）
+- **完成标准双达标**: 脚本 **exit 0**；`cargo test` **237/0**
+- **回归全绿**: fmt --check 0、clippy -D warnings rc=0、release 0 warning、
+  矩阵 39/51+12SKIP 0 FAIL、UDP e2e ALL_PASS、resilience 4/4
