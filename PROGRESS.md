@@ -165,7 +165,17 @@
     服务端 tunnel_stage_initial 拒包（SSR_DEBUG 抓到 `iv=` 空字节）
   - 修复: 在 `impl Protocol for AuthAES128` 覆写 set_server_iv；
     修后 `iv=f2bbf249…` 非空，同配置 404 与 C 客户端一致
-- **矩阵 27/51 → 35/51**; 剩余 8 FAIL（table/rc4-md5/rc4-md5-6/chacha20 +
-  verify_simple/auth_simple/auth_sha1/auth_sha1_v2）与 GOALS 旧记录
-  "cipher 9/28, protocol 2/4" 一致 = 历史遗留，记入 RESULTS.md 待查
+- **矩阵 27/51 → 35/51 → 39/51 PASS + 12 SKIP, 0 FAIL（2026-09-23 终态）**;
+  最后 8 例根因对照 C 源码全部修复/定性（f484417）:
+  1. table: `encrypt_in_place` 把 Table 当 no-op（TCP 状态路径明文上线）→
+     改在 `encrypt_ctx`/`decrypt_ctx` 应用 TableCipher
+  2. rc4-md5/rc4-md5-6: `iv_size()` 曾返回 0，但 C 表 iv=16/6 且
+     enc_iv_len 用 ss_cipher_iv_size（encrypt.c:1317-1321）→ IV 从未上线；
+     会话密钥还被错截 6 字节（C setkey 用完整 16 字节 md5(key||iv)）
+  3. chacha20: C 用 libsodium 原版 8 字节 nonce，我方补零成 12 字节走
+     IETF → 改用 `chacha20::ChaCha20Legacy`（features=["legacy"]）
+  4. verify_simple/auth_simple/auth_sha1/auth_sha1_v2: `--ref-c` 对照证明
+     C 客户端同样 FAIL —— C 服务端没给这 4 个协议挂 server_post_decrypt
+     （仅 v4/aes128/chain 挂；ssr_executive.c:649 NULL 即跳过解帧）→
+     按 GOALS 控制规则记 PROTOCOL_SKIP
 - `cargo test` 239 passed / 0 failed（无回归）
