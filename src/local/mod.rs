@@ -335,7 +335,9 @@ impl ObfsRelay {
                         Ok(0) => {
                             ssr_debug!("[relay] EOF from client, draining server...");
                             // Client closed — send FIN to server, then drain remaining server data
-                            let _ = self.remote_write.shutdown().await;
+                            if let Err(e) = self.remote_write.shutdown().await {
+                                ssr_debug!("[relay] FIN to server failed (draining anyway): {e}");
+                            }
                             loop {
                                 match self.remote_read.read(&mut remote_buf).await {
                                     Ok(0) => { ssr_debug!("[relay] Server EOF after drain"); break; }
@@ -719,7 +721,7 @@ async fn perform_obfs_handshake(
     let mut buf = vec![0u8; 8192];
     let n = tokio::time::timeout(Duration::from_secs(10), remote.read(&mut buf))
         .await
-        .map_err(|_| SsrError::Connection("Timeout reading server response".to_string()))??;
+        .map_err(|_| SsrError::Timeout("reading server response".to_string()))??;
     if n == 0 {
         return Err(SsrError::Connection(
             "Server closed connection during handshake".to_string(),
@@ -746,8 +748,8 @@ async fn connect_to_ssr_server(config: &SsrClientConfig) -> SsrResult<TcpStream>
     )
     .await
     .map_err(|_| {
-        SsrError::Connection(format!(
-            "Timeout connecting to SSR server {addr} ({}s)",
+        SsrError::Timeout(format!(
+            "connecting to SSR server {addr} ({}s)",
             config.connect_timeout
         ))
     })?

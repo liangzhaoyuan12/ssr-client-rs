@@ -69,7 +69,6 @@ pub struct UdpRelay {
     listener: Arc<UdpSocket>,
     server: SocketAddr,
     env: Arc<CipherEnv>,
-    is_aead: bool,
     protocol: Arc<Mutex<Box<dyn Protocol>>>,
     sessions: Arc<Mutex<HashMap<SessionKey, Session>>>,
     timeout_ms: u64,
@@ -101,7 +100,6 @@ impl UdpRelay {
             listener: Arc::new(listener),
             server,
             env: Arc::new(env),
-            is_aead,
             protocol: Arc::new(Mutex::new(protocol)),
             sessions: Arc::new(Mutex::new(HashMap::new())),
         })
@@ -262,7 +260,6 @@ impl UdpRelay {
             sock.clone(),
             self.listener.clone(),
             self.env.clone(),
-            self.is_aead,
             self.protocol.clone(),
             self.sessions.clone(),
             last_seen,
@@ -279,7 +276,6 @@ fn spawn_session_task(
     sock: Arc<UdpSocket>,
     listener: Arc<UdpSocket>,
     env: Arc<CipherEnv>,
-    is_aead: bool,
     protocol: Arc<Mutex<Box<dyn Protocol>>>,
     sessions: Arc<Mutex<HashMap<SessionKey, Session>>>,
     last_seen: Arc<AtomicU64>,
@@ -357,7 +353,6 @@ fn spawn_session_task(
                 }
             }
         }
-        let _ = is_aead;
     });
 }
 

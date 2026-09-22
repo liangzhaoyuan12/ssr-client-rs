@@ -56,6 +56,8 @@ async fn main() {
     });
 
     eprintln!("SSR client listening on {listen} (remote {server})");
-    signal::ctrl_c().await.ok();
+    if let Err(e) = signal::ctrl_c().await {
+        eprintln!("ctrl-c wait failed: {e}");
+    }
     client_ref.stop();
 }

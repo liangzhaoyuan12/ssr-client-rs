@@ -380,3 +380,52 @@
      SIGINT 优雅退出 exit=0 ✓
 - **回归全绿**: cargo build/test 237-0、clippy -D rc=0、fmt 0、
   panic 脚本 rc=0、矩阵 39/51+12SKIP 0 FAIL、UDP e2e ALL_PASS、resilience 4/4
+
+### ✅ Q8 错误处理审计（2026-09-23）
+
+**三类全库搜索结果与处置**:
+
+1. `let _ =`（6 处）→ 处置后生产路径 **0** 处吞错:
+   - `local/mod.rs` `remote_write.shutdown()`（客户端 EOF 后发 FIN）——
+     **真吞错，已修**: 改 `if let Err(e)` + ssr_debug 日志（drain 照常，不中断）
+   - `udp_relay.rs` `let _ = is_aead`——**死参数链，已清**: `spawn_session_task`
+     的 `is_aead` 形参/UdpRelay 字段/调用点参数/丢弃语句四处全删
+     （该值只在 `bind()` 里创建 protocol 时用一次）
+   - `auth_chain.rs`/`auth_aes128.rs` `let _ = salt`——协议 trait `set_salt`
+     的占位参数（salt 在构造函数注入），非错误，保留
+   - 其余 2 处在 `#[cfg(test)]` 内（`let _ = ....unwrap()` 断言副作用），不计
+   - `bin/ssr_client.rs` `signal::ctrl_c().await.ok()`——**真吞错，已修**:
+     改 `if let Err(e)` + eprintln
+2. `.ok()`（4 处生产）→ 逐处判定**非网络错误吞错**:
+   - `sockaddr.rs resolve`: 返回类型即 `Option<SocketAddr>`（文档化的 API 语义），
+     DNS 失败 = None，调用方 0 处（未被使用，保留 API）
+   - `config_json.rs as_u16/as_u32`: 类型访问器，JSON 值类型不符 = None
+     （Q7 已写入 doc 的错误条件）
+   - `auth_chain.rs:1181`: strtol 镜像，解析失败 = None（对应 C strtol 语义）
+3. `.unwrap_or_default()`（5 处）→ 全部是
+   `SystemTime::now().duration_since(UNIX_EPOCH)`（时钟回拨防御），
+   与 C 的 `time()` 语义一致，**非错误处理**，保留
+
+**io::Error 源链 / API 形态**:
+- `SsrError::Io(#[from] std::io::Error)` — thiserror source 链完整；
+  `relay/mod.rs`、`local/mod.rs` 的 `write_all(...).await?` 等直接 `?` 传播走这条链
+- 需要上下文的 66 处 `map_err(|e| ... format!("... {e}"))` 全部**内嵌原始错误文本**
+  （操作+地址+错误三要素），无一处丢弃 `e`
+- **无 `Box<dyn Error>` / anyhow**（全库 grep 0 命中；`Box<dyn Protocol/Obfs>`
+  是内部 trait object，非错误类型）
+
+**SsrError 变体覆盖核查**（构造点计数，含 helper）:
+| 变体 | 构造点 | | 变体 | 构造点 |
+|---|---|---|---|---|
+| Crypto | 85 | | Connection | 13 |
+| Socks5 | 21+6 | | Protocol | 25 |
+| Obfs | 1 | | InvalidCipherMethod | 5 |
+| Io | 隐式 `?`（8+ 处 await?） | | InvalidProtocol/InvalidObfs | 1/1 |
+| **Timeout** | **2（本次接通）** | | Other/InvalidArgument | 0（helper 保留） |
+- **修复**: 超时误用 `Connection` 变体 ×2（握手读响应、TCP connect 超时）
+  → 改 `SsrError::Timeout`，`Timeout` 变体从 0 使用变为按语义使用
+- `Timeout`/`InvalidArgument` helper 与 `Other` 暂无构造点——保留为
+  公共 API 的合法变体（下游匹配需要），不算漏洞
+
+**门禁**: fmt 0、clippy -D rc=0、cargo test 237-0、panic 脚本 rc=0、
+`cargo doc --no-deps` 0、矩阵 39/51+12SKIP 0 FAIL、UDP e2e ALL_PASS、resilience 4/4

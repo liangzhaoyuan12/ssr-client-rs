@@ -226,7 +226,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
   - 新增 `examples/socks5.rs`: 20 行内起一个可用的 SOCKS5 代理
   - 完成标准: `cargo doc --no-deps` 零告警；example 可 `cargo run --example socks5` 跑通
 
-- [ ] Q8 错误处理审计
+- [x] Q8 错误处理审计（静默吞错 0、Timeout 变体接通、死参数清除；无 Box<dyn Error>，io 源链 `#[from]` 完整，2026-09-23）
   - 全库搜索 `let _ =`、`ok()`、`.unwrap_or_default()` 处理网络错误的地方，确认无静默吞错
   - 所有 io::Error 传播带上下文（thiserror source 链完整）
   - 对外 API 不返回裸 `Box<dyn Error>`；确认 `SsrError` 变体覆盖全部路径
