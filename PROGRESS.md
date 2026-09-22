@@ -36,16 +36,29 @@
 - **E2e 已验证**（端口18391/19905）: httpbin JSON 200 / bytes/102400 code=200
   （下行1456 分块多帧 + 跨读拼包正常）
 
-### 下一阶段已知问题（auth_chain_d-f 按 B/C 的套路做）
-1. D/E/F 的 new() 需装 `rand_len_fn` + 把 data_size_list 初始化挪进 `rand_len_ctx.c`
-   （D/E 的 struct 仍有独立 c_ctx 字段，F 需要新写）
-2. D/E/F 的自定义 `client_pre_encrypt` 覆盖删除、委托 inner（同 B/C 已做）
-3. 逐行对照 C 的回调:
-   - D: auth_chain_d_get_rand_len + check_and_patch (last>=1300, max64)
-   - E: auth_chain_e_get_rand_len（find_pos 取最小值分支）
-   - F: auth_chain_f_get_rand_len + 时间换 key 的 init (key_change_interval)
-4. F 的 init_data_size 现实现含 `#N#` 时间参数解析，需对照 C 校验
+### ✅ auth_chain_d 端到端 (commit 5331984)
+- `rand_len_d` 按 C auth_chain.c:1368-1388 移植: 守卫 `other >= list0.last()`
+  **先于 reinit** 且直接返回 0（与 C/E 的无条件 reinit 相反，也无 >1440 阶梯）
+- AuthChainD::new 装回调；init_data_size 的 append-until->=1300/64 patch 循环
+  与 C check_and_patch 对照确认；删自定义 client_pre_encrypt；c_ctx 字段移除
+- **E2e 已验证**（端口18392/19906）: httpbin JSON 200 / bytes/102400 code=200
+
+### ✅ auth_chain_e/f 端到端 (commit 2272da4)
+- `rand_len_e` 按 C auth_chain.c:1405-1429 移植: 无条件 reinit（同 C 变体），
+  尾部选择用 find_pos **最小值**（无 next() 随机，d/b/c 有随机选择）
+- **F 复用 E 的回调**（C f_new_obfs 只换 salt，无自己的 get_rand_len）——
+  AuthChainF::new 也装 rand_len_e；删 E/F 自定义 client_pre_encrypt
+- F `#N#` interval 解析对齐 C (auth_chain.c:1500-1518): 数字位数 >2 才生效
+  (l>2)、strtoll base0 (0x 十六进制/前导0 八进制)、正数且 !=LLONG_MAX；+单测
+- F 的时间换 key init (server_key XOR 大端 time_key → from_bin 前16字节) 与 C 对照
+- **E2e 已验证**: auth_chain_e+aes-256-cfb（端口18393/19907）与
+  auth_chain_f+aes-128-cfb（端口18394/19908, param #86400#）均
+  httpbin JSON 200 / bytes/102400 code=200
+- **C 服务端 bug 发现**: ssr-server 在 auth_chain_f + key_len>16 的方法
+  (如 aes-256-cfb) 启动即 SIGBUS —— auth_chain_f_set_server_info 把
+  key_len(32) 字节 memcpy 进16字节栈缓冲; aes-128-cfb (key_len=16) 正常。
+  我方客户端取 min(16) = C 的意图行为
+- 所有184 测试通过
 
 ### 未开始
-- auth_chain_d-f
 - UDP relay
