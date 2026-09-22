@@ -335,3 +335,23 @@
 - **无保留条目**: 0 处 unsafe → 0 条 SAFETY 注释需要
 - **回归全绿**: build/test 237-0、fmt 0、panic 脚本 rc=0、release 0 warning、
   矩阵 39/51+12SKIP 0 FAIL、UDP e2e ALL_PASS、resilience 4/4
+
+### ✅ Q6 发布构建配置（2026-09-23）
+
+- Cargo.toml 增加:
+  ```toml
+  [profile.release]
+  opt-level = 3
+  lto = "thin"
+  codegen-units = 1
+  strip = "symbols"
+  ```
+  `panic = "abort"` **不设**（库 crate，交给下游决定）——GOALS 原文要求
+- **体积（GOALS 要求记录前后值）**:
+  - 前: `target/release/ssr_client` = **1,819,664 字节**（1.8M）
+  - 后: `target/release/ssr_client` = **1,184,576 字节**（1.2M）
+  - **−635,088 字节 / −34.9%**
+- **回归全绿（新二进制实测）**: cargo test 237/0、矩阵 39/51+12SKIP 0 FAIL、
+  UDP e2e ALL_PASS、clippy -D rc=0、fmt 0、panic 脚本 rc=0、
+  release 0 warning、二进制冒烟启动正常（读 hk.json 监听 1080）
+- 注: thin LTO + CGU=1 改变了全部 crate 的编译指纹，release 全量重建耗时明显变长（本机约 1 分钟级），属预期

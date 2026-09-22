@@ -37,3 +37,11 @@ proptest = "1.11.0"
 # Q2: freeze the zero-warning baseline — any new rustc warning fails the build.
 [lints.rust]
 warnings = "deny"
+
+# Q6: release hardening. panic = "abort" is deliberately NOT set — this is a
+# library crate; downstream decides.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

@@ -208,7 +208,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
   - 逐处判断: 能删则删（多半可用 safe 等价改写）；必须保留的，原地写 `// SAFETY:` 段落说明不变量与为何成立
   - 完成标准: `grep -rn 'unsafe ' src` = 0，或条目数 = SAFETY 注释数且经人工复核
 
-- [ ] Q6 发布构建配置
+- [x] Q6 发布构建配置（profile.release: opt3+thin LTO+CGU1+strip；ssr_client 1819664→1184576 字节，−35%）
   - Cargo.toml 增加（库被下游使用时 profile 仅在顶层生效，属无害最佳实践）:
     ```toml
     [profile.release]
