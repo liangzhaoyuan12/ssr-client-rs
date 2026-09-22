@@ -163,6 +163,46 @@ fn rand_len_b(
     (random.next() % 1021) as usize
 }
 
+/// C: auth_chain_c_get_rand_len (auth_chain.c:1270-1297). Unlike A/B, the
+/// PRNG is reinitialised UNCONDITIONALLY before any branch check — C's comment:
+/// "must init random in here to make sure output sync in server and client".
+fn rand_len_c(
+    random: &mut Shift128plusCtx,
+    last_hash: &[u8; 16],
+    ctx: &RandLenCtx,
+    datalength: usize,
+) -> usize {
+    let overhead = ctx.overhead as usize;
+    let c = ctx
+        .c
+        .as_ref()
+        .expect("auth_chain_c: missing data_size_list0 context");
+    let other_data_size = datalength + overhead;
+
+    *random = Shift128plusCtx::from_bin_datalen(last_hash, datalength);
+
+    if other_data_size >= c.data_size_list0[c.data_size_list0.len() - 1] as usize {
+        if datalength > 1440 {
+            return 0;
+        }
+        if datalength > 1300 {
+            return (random.next() % 31) as usize;
+        }
+        if datalength > 900 {
+            return (random.next() % 127) as usize;
+        }
+        if datalength > 400 {
+            return (random.next() % 521) as usize;
+        }
+        return (random.next() % 1021) as usize;
+    }
+
+    // other_data_size < list0.last() guarantees find_pos < len (no %0 here)
+    let pos = find_pos(&c.data_size_list0, other_data_size as i32);
+    let final_pos = pos + (random.next() as usize) % (c.data_size_list0.len() - pos);
+    (c.data_size_list0[final_pos] as usize).saturating_sub(other_data_size)
+}
+
 struct AuthChainAContext {
     obfs: Option<*mut AuthChainA>, // back-reference
     has_sent_header: bool,
@@ -671,16 +711,19 @@ struct AuthChainCContext {
 
 pub struct AuthChainC {
     inner: AuthChainA,
-    c_ctx: AuthChainCContext,
 }
 
 impl AuthChainC {
     pub fn new(server_info: ServerInfo) -> Self {
+        // C: auth_chain_c_new_obfs = auth_chain_a_new_obfs() + swap
+        // get_tcp_rand_len/salt + subclass_context; generic pre/post encrypt.
         let mut inner = AuthChainA::new(server_info.clone(), "auth_chain_c");
-        let c_ctx = Self::init_data_size(&server_info.key);
-        Self { inner, c_ctx }
+        inner.local.rand_len_fn = rand_len_c;
+        inner.local.rand_len_ctx.c = Some(Self::init_data_size(&server_info.key));
+        Self { inner }
     }
 
+    /// C: auth_chain_c_init_data_size (auth_chain.c:1240-1263)
     fn init_data_size(key: &[u8]) -> AuthChainCContext {
         let mut random = Shift128plusCtx::from_bin(key);
         let list_len = (random.next() % (8 + 16) + (4 + 8)) as usize;
@@ -689,34 +732,6 @@ impl AuthChainC {
             .collect();
         data_size_list0.sort();
         AuthChainCContext { data_size_list0 }
-    }
-
-    fn find_pos(arr: &[i32], key: i32) -> usize {
-        match arr.binary_search(&key) {
-            Ok(i) => i,
-            Err(i) => i,
-        }
-    }
-
-    fn get_rand_len(local: &mut AuthChainAContext, c_ctx: &AuthChainCContext, datalength: usize) -> usize {
-        let overhead = local.client_over_head as usize;
-        let other_data_size = datalength + overhead;
-
-        let mut rng = Shift128plusCtx::from_bin_datalen(&local.last_client_hash, datalength);
-
-        if other_data_size >= *c_ctx.data_size_list0.last().unwrap_or(&0) as usize {
-            if datalength > 1440 { return 0; }
-            if datalength > 1300 { return (rng.next() % 31) as usize; }
-            if datalength > 900 { return (rng.next() % 127) as usize; }
-            if datalength > 400 { return (rng.next() % 521) as usize; }
-            return (rng.next() % 1021) as usize;
-        }
-
-        let pos = Self::find_pos(&c_ctx.data_size_list0, other_data_size as i32);
-        let remaining = c_ctx.data_size_list0.len() - pos;
-        if remaining == 0 { return 0; }
-        let final_pos = pos + (rng.next() as usize) % remaining;
-        (c_ctx.data_size_list0[final_pos] as usize).saturating_sub(other_data_size)
     }
 }
 
@@ -727,34 +742,9 @@ impl Protocol for AuthChainC {
     fn set_server_iv(&mut self, iv: Vec<u8>) { self.inner.set_server_iv(iv); }
 
     fn client_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
-        // Same as B but with C-specific rand_len
-        self.inner.init_user_key();
-        let mut result = Vec::new();
-        let mut data = plaindata;
-        let mut len = plaindata.len();
-
-        if len > 0 && !self.inner.local.has_sent_header {
-            let head_size = 1200.min(len);
-            let packed = self.inner.pack_auth_data(&data[..head_size]);
-            result.extend_from_slice(&packed);
-            data = &data[head_size..];
-            len -= head_size;
-            self.inner.local.has_sent_header = true;
-        }
-
-        while len > 2000 {
-            let packed = self.inner.pack_client_data(&data[..2000]);
-            result.extend_from_slice(&packed);
-            data = &data[2000..];
-            len -= 2000;
-        }
-        if len > 0 {
-            let packed = self.inner.pack_client_data(data);
-            result.extend_from_slice(&packed);
-        }
-
-        self.inner.local.last_data_len = plaindata.len();
-        Ok(result)
+        // Generic C path: auth_chain_a_client_pre_encrypt with the c variant's
+        // get_tcp_rand_len callback installed in new().
+        self.inner.client_pre_encrypt(plaindata)
     }
 
     fn client_post_decrypt(&mut self, data: &[u8]) -> SsrResult<Vec<u8>> {
@@ -798,22 +788,6 @@ impl AuthChainD {
         AuthChainCContext {
             data_size_list0: data_size_list0[..current_len].to_vec(),
         }
-    }
-
-    fn get_rand_len(local: &mut AuthChainAContext, c_ctx: &AuthChainCContext, datalength: usize) -> usize {
-        let overhead = local.client_over_head as usize;
-        let other_data_size = datalength + overhead;
-
-        if other_data_size >= *c_ctx.data_size_list0.last().unwrap_or(&0) as usize {
-            return 0;
-        }
-
-        let mut rng = Shift128plusCtx::from_bin_datalen(&local.last_client_hash, datalength);
-        let pos = AuthChainC::find_pos(&c_ctx.data_size_list0, other_data_size as i32);
-        let remaining = c_ctx.data_size_list0.len() - pos;
-        if remaining == 0 { return 0; }
-        let final_pos = pos + (rng.next() as usize) % remaining;
-        (c_ctx.data_size_list0[final_pos] as usize).saturating_sub(other_data_size)
     }
 }
 
@@ -876,8 +850,7 @@ impl AuthChainE {
         if other_data_size >= *c_ctx.data_size_list0.last().unwrap_or(&0) as usize {
             return 0;
         }
-
-        let pos = AuthChainC::find_pos(&c_ctx.data_size_list0, other_data_size as i32);
+        let pos = find_pos(&c_ctx.data_size_list0, other_data_size as i32);
         // E uses minimum size (pos) instead of random selection
         (c_ctx.data_size_list0[pos] as usize).saturating_sub(other_data_size)
     }
