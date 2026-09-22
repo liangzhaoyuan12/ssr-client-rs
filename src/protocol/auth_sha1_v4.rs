@@ -33,8 +33,8 @@ impl AuthSHA1V4 {
 
     fn get_rand_len(&mut self, datalength: usize) -> usize {
         if datalength > 1300 { 1 }
-        else if datalength > 400 { ((self.rng.next() & 0x7F) + 1) as usize }
-        else { ((self.rng.next() & 0x3FF) + 1) as usize }
+        else if datalength > 400 { ((self.rng.next_u64() & 0x7F) + 1) as usize }
+        else { ((self.rng.next_u64() & 0x3FF) + 1) as usize }
     }
 
     fn pack_data(&mut self, data: &[u8]) -> Vec<u8> {
@@ -165,7 +165,7 @@ impl Protocol for AuthSHA1V4 {
                 break;
             }
             let length = ((recv[0] as usize) << 8) | recv[1] as usize;
-            if length >= 8192 || length < 7 {
+            if !(7..8192).contains(&length) {
                 self.recv_buffer.clear();
                 break;
             }

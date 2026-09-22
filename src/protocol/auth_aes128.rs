@@ -106,15 +106,15 @@ impl AuthAES128 {
             return 0;
         }
         if datalength > 1100 {
-            return (self.rng.next() & 0x7F) as usize;
+            return (self.rng.next_u64() & 0x7F) as usize;
         }
         if datalength > 900 {
-            return (self.rng.next() & 0xFF) as usize;
+            return (self.rng.next_u64() & 0xFF) as usize;
         }
         if datalength > 400 {
-            return (self.rng.next() & 0x1FF) as usize;
+            return (self.rng.next_u64() & 0x1FF) as usize;
         }
-        (self.rng.next() & 0x3FF) as usize
+        (self.rng.next_u64() & 0x3FF) as usize
     }
 
     fn pack_data(&mut self, data: &[u8], fulldatalength: usize) -> Vec<u8> {
@@ -176,9 +176,9 @@ impl AuthAES128 {
         //   unsigned int rand_len = (datalength > 400 ? (xorshift128plus() & 0x1FF)
         //                                             : (xorshift128plus() & 0x3FF));
         let rand_len = if data.len() > 400 {
-            (self.rng.next() & 0x1FF) as usize
+            (self.rng.next_u64() & 0x1FF) as usize
         } else {
-            (self.rng.next() & 0x3FF) as usize
+            (self.rng.next_u64() & 0x3FF) as usize
         };
         let data_offset = rand_len + 16 + 4 + 4 + 7;
         let out_size = data_offset + data.len() + 4;
@@ -253,7 +253,7 @@ pub(crate) fn aes_128_cbc_encrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
     let block_size = 16;
     let pad_len = block_size - (data.len() % block_size);
     let mut padded = data.to_vec();
-    padded.extend(std::iter::repeat(pad_len as u8).take(pad_len));
+    padded.extend(std::iter::repeat_n(pad_len as u8, pad_len));
 
     let cipher = Aes128Enc::new_from_slice(key).unwrap();
     let mut iv = [0u8; 16];
@@ -405,7 +405,7 @@ impl Protocol for AuthAES128 {
             // Length (little-endian)
             let length = (self.recv_buffer[1] as usize) << 8 | self.recv_buffer[0] as usize;
 
-            if length >= 8192 || length < 8 {
+            if !(8..8192).contains(&length) {
                 self.recv_buffer.clear();
                 return Err(crate::error::SsrError::Protocol("auth_aes128: invalid length".into()));
             }

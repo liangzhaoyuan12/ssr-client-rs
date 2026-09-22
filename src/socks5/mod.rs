@@ -1,9 +1,9 @@
-/// SOCKS5 protocol parser and responder.
-///
-/// Implements the server-side of SOCKS5 (RFC 1928):
-/// - Method negotiation (supports NO AUTH only)
-/// - CONNECT request parsing with IPv4/IPv6/domain address types
-/// - Reply generation
+// SOCKS5 protocol parser and responder.
+//
+// Implements the server-side of SOCKS5 (RFC 1928):
+// - Method negotiation (supports NO AUTH only)
+// - CONNECT request parsing with IPv4/IPv6/domain address types
+// - Reply generation
 
 use crate::error::{SsrError, SsrResult};
 
@@ -332,10 +332,10 @@ pub fn build_udp_datagram(addr: &TargetAddress, port: u16, payload: &[u8]) -> Ve
 
 /// Read exact bytes from a buffer (blocking parse helper).
 /// Returns the consumed bytes and remaining slice.
-pub fn take_bytes<'a>(
-    data: &'a [u8],
+pub fn take_bytes(
+    data: &[u8],
     n: usize,
-) -> SsrResult<(&'a [u8], &'a [u8])> {
+) -> SsrResult<(&[u8], &[u8])> {
     if data.len() < n {
         return Err(SsrError::socks5(format!(
             "Need {} bytes, have {}",
@@ -344,6 +344,29 @@ pub fn take_bytes<'a>(
         )));
     }
     Ok((&data[..n], &data[n..]))
+}
+
+/// Build SSR address package from SOCKS5 target address.
+/// Format: ATYP(1) + address(variable) + port(2, big-endian)
+pub fn build_address_package(addr: &TargetAddress, port: u16) -> Vec<u8> {
+    let mut pkg = Vec::new();
+    match addr {
+        TargetAddress::IPv4(ip) => {
+            pkg.push(ATYP_IPV4);
+            pkg.extend_from_slice(ip);
+        }
+        TargetAddress::IPv6(ip) => {
+            pkg.push(ATYP_IPV6);
+            pkg.extend_from_slice(ip);
+        }
+        TargetAddress::Domain(domain) => {
+            pkg.push(ATYP_DOMAIN);
+            pkg.push(domain.len() as u8);
+            pkg.extend_from_slice(domain);
+        }
+    }
+    pkg.extend_from_slice(&port.to_be_bytes());
+    pkg
 }
 
 #[cfg(test)]
@@ -648,27 +671,4 @@ mod tests {
         let err = take_bytes(&data, 3);
         assert!(err.is_err());
     }
-}
-
-/// Build SSR address package from SOCKS5 target address.
-/// Format: ATYP(1) + address(variable) + port(2, big-endian)
-pub fn build_address_package(addr: &TargetAddress, port: u16) -> Vec<u8> {
-    let mut pkg = Vec::new();
-    match addr {
-        TargetAddress::IPv4(ip) => {
-            pkg.push(ATYP_IPV4);
-            pkg.extend_from_slice(ip);
-        }
-        TargetAddress::IPv6(ip) => {
-            pkg.push(ATYP_IPV6);
-            pkg.extend_from_slice(ip);
-        }
-        TargetAddress::Domain(domain) => {
-            pkg.push(ATYP_DOMAIN);
-            pkg.push(domain.len() as u8);
-            pkg.extend_from_slice(domain);
-        }
-    }
-    pkg.extend_from_slice(&port.to_be_bytes());
-    pkg
 }

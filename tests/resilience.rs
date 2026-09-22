@@ -13,7 +13,7 @@
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
 const SERVER_BIN: &str = "/opt/ssr/ssr-server";
@@ -73,7 +73,6 @@ struct Stack {
     srv_log: PathBuf,
     cli_log: PathBuf,
     srv_port: u16,
-    cli_port: u16,
 }
 
 impl Stack {
@@ -145,7 +144,6 @@ fn start_stack(tag: &str, srv_port: u16, cli_port: u16, idle: u32) -> Stack {
         srv_log,
         cli_log,
         srv_port,
-        cli_port,
     };
     assert!(stack.spawn_server(), "ssr-server did not bind {srv_port}");
 
@@ -170,22 +168,20 @@ fn start_stack(tag: &str, srv_port: u16, cli_port: u16, idle: u32) -> Stack {
 fn start_echo(port: u16) {
     let listener = TcpListener::bind(("127.0.0.1", port)).expect("echo bind");
     std::thread::spawn(move || {
-        for conn in listener.incoming() {
-            if let Ok(mut s) = conn {
-                std::thread::spawn(move || {
-                    let mut buf = [0u8; 4096];
-                    loop {
-                        match s.read(&mut buf) {
-                            Ok(0) | Err(_) => break,
-                            Ok(n) => {
-                                if s.write_all(&buf[..n]).is_err() {
-                                    break;
-                                }
+        for mut s in listener.incoming().flatten() {
+            std::thread::spawn(move || {
+                let mut buf = [0u8; 4096];
+                loop {
+                    match s.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            if s.write_all(&buf[..n]).is_err() {
+                                break;
                             }
                         }
                     }
-                });
-            }
+                }
+            });
         }
     });
     assert!(wait_port(port, Duration::from_secs(2)), "echo not up");

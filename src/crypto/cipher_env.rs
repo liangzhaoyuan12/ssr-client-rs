@@ -29,7 +29,8 @@ pub enum EncryptContext {
     AES128CTR { cipher: Aes128Ctr },
     AES192CTR { cipher: Aes192Ctr },
     AES256CTR { cipher: Aes256Ctr },
-    BlowfishCFB { cipher: BlowfishCfbEnc },
+    /// Boxed: Blowfish carries ~4KB of S-box state (clippy large_enum_variant).
+    BlowfishCFB { cipher: Box<BlowfishCfbEnc> },
     DESCFB { cipher: DesCfbEnc },
     Salsa20 { cipher: salsa20::Salsa20 },
     ChaCha20 { cipher: chacha20::ChaCha20 },
@@ -38,7 +39,8 @@ pub enum EncryptContext {
     ChaCha20Legacy { cipher: chacha20::ChaCha20Legacy },
     /// AEAD streams replace the payload rather than transforming it in place,
     /// so they are handled in `encrypt_ctx` before `encrypt_in_place` runs.
-    Aead(AeadEncryptCtx),
+    /// Boxed: AeadEncryptCtx dwarfs the other variants (clippy large_enum_variant).
+    Aead(Box<AeadEncryptCtx>),
 }
 
 pub enum DecryptContext {
@@ -50,15 +52,16 @@ pub enum DecryptContext {
     AES128CTR { cipher: Aes128Ctr },
     AES192CTR { cipher: Aes192Ctr },
     AES256CTR { cipher: Aes256Ctr },
-    BlowfishCFB { cipher: BlowfishCfbDec },
+    BlowfishCFB { cipher: Box<BlowfishCfbDec> },
     DESCFB { cipher: DesCfbDec },
     Salsa20 { cipher: salsa20::Salsa20 },
     ChaCha20 { cipher: chacha20::ChaCha20 },
     ChaCha20Legacy { cipher: chacha20::ChaCha20Legacy },
-    Aead(AeadDecryptCtx),
+    /// Boxed for the same size reason as `EncryptContext::Aead`.
+    Aead(Box<AeadDecryptCtx>),
 }
 
-fn encrypt_in_place(ctx: &mut EncryptContext, output: &mut Vec<u8>) {
+fn encrypt_in_place(ctx: &mut EncryptContext, output: &mut [u8]) {
     match ctx {
         EncryptContext::None | EncryptContext::Table => {}
         EncryptContext::RC4 { cipher } => { cipher.apply_keystream(output); }
@@ -79,7 +82,7 @@ fn encrypt_in_place(ctx: &mut EncryptContext, output: &mut Vec<u8>) {
     }
 }
 
-fn decrypt_in_place(ctx: &mut DecryptContext, output: &mut Vec<u8>) {
+fn decrypt_in_place(ctx: &mut DecryptContext, output: &mut [u8]) {
     match ctx {
         DecryptContext::None | DecryptContext::Table => {}
         DecryptContext::RC4 { cipher } => { cipher.apply_keystream(output); }
@@ -153,7 +156,7 @@ impl CipherEnv {
             // The AEAD context emits and manages its own salt, and the C code
             // reports an empty IV to the obfs/protocol layers for AEAD.
             let ctx = AeadEncryptCtx::new(self.method, &self.aead_master_key)?;
-            return Ok((EncryptContext::Aead(ctx), Vec::new()));
+            return Ok((EncryptContext::Aead(Box::new(ctx)), Vec::new()));
         }
         let iv_len = self.iv_len;
         let mut iv = vec![0u8; iv_len];
@@ -179,7 +182,7 @@ impl CipherEnv {
             CT::AES128CTR => EncryptContext::AES128CTR { cipher: Aes128Ctr::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? },
             CT::AES192CTR => EncryptContext::AES192CTR { cipher: Aes192Ctr::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? },
             CT::AES256CTR => EncryptContext::AES256CTR { cipher: Aes256Ctr::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? },
-            CT::BFCFB => EncryptContext::BlowfishCFB { cipher: BlowfishCfbEnc::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? },
+            CT::BFCFB => EncryptContext::BlowfishCFB { cipher: Box::new(BlowfishCfbEnc::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))?) },
             CT::DESCFB => EncryptContext::DESCFB { cipher: DesCfbEnc::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? },
             CT::Salsa20 => EncryptContext::Salsa20 { cipher: <salsa20::Salsa20 as cipher::KeyIvInit>::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? },
             CT::ChaCha20 => {
@@ -222,11 +225,11 @@ impl CipherEnv {
             // salt arrives (it may be split across packets) and returns all the
             // data untouched so `decrypt_ctx` can consume it.
             let ctx = AeadDecryptCtx::new(self.method, &self.aead_master_key)?;
-            return Ok((DecryptContext::Aead(ctx), ciphertext.to_vec()));
+            return Ok((DecryptContext::Aead(Box::new(ctx)), ciphertext.to_vec()));
         }
         let iv_len = self.iv_len;
         if iv_len > 0 {
-            if ciphertext.len() < iv_len { return Err(crate::error::SsrError::crypto(format!("Ciphertext too short for IV"))); }
+            if ciphertext.len() < iv_len { return Err(crate::error::SsrError::crypto("Ciphertext too short for IV".to_string())); }
             let iv = ciphertext[..iv_len].to_vec();
             let data = ciphertext[iv_len..].to_vec();
             let ctx = self.make_decrypt_ctx(&iv)?;
@@ -253,7 +256,7 @@ impl CipherEnv {
             CT::AES128CTR => DecryptContext::AES128CTR { cipher: Aes128Ctr::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? },
             CT::AES192CTR => DecryptContext::AES192CTR { cipher: Aes192Ctr::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? },
             CT::AES256CTR => DecryptContext::AES256CTR { cipher: Aes256Ctr::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? },
-            CT::BFCFB => DecryptContext::BlowfishCFB { cipher: BlowfishCfbDec::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? },
+            CT::BFCFB => DecryptContext::BlowfishCFB { cipher: Box::new(BlowfishCfbDec::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))?) },
             CT::DESCFB => DecryptContext::DESCFB { cipher: DesCfbDec::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? },
             CT::Salsa20 => DecryptContext::Salsa20 { cipher: <salsa20::Salsa20 as cipher::KeyIvInit>::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? },
             CT::ChaCha20 => {
@@ -288,7 +291,7 @@ impl CipherEnv {
             CipherType::Table => {
                 if let Some(ref table) = self.table_cipher { Ok(table.encrypt(plaintext)) } else { Ok(plaintext.to_vec()) }
             }
-            _ if self.method.is_aead() => Err(crate::error::SsrError::crypto(format!("AEAD requires context-based encryption"))),
+            _ if self.method.is_aead() => Err(crate::error::SsrError::crypto("AEAD requires context-based encryption".to_string())),
             _ => {
                 let iv_len = self.iv_len;
                 let mut iv = vec![0u8; iv_len];
@@ -308,10 +311,10 @@ impl CipherEnv {
             CipherType::Table => {
                 if let Some(ref table) = self.table_cipher { Ok(table.decrypt(ciphertext)) } else { Ok(ciphertext.to_vec()) }
             }
-            _ if self.method.is_aead() => Err(crate::error::SsrError::crypto(format!("AEAD requires context-based decryption"))),
+            _ if self.method.is_aead() => Err(crate::error::SsrError::crypto("AEAD requires context-based decryption".to_string())),
             _ => {
                 let iv_len = self.iv_len;
-                if ciphertext.len() < iv_len { return Err(crate::error::SsrError::crypto(format!("Ciphertext too short"))); }
+                if ciphertext.len() < iv_len { return Err(crate::error::SsrError::crypto("Ciphertext too short".to_string())); }
                 crate::crypto::stream::stream_decrypt(self.method, &self.key, &ciphertext[..iv_len], &ciphertext[iv_len..])
             }
         }

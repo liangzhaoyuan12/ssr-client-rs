@@ -188,7 +188,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
   - 每改一类跑 `cargo test`，行为不得变化（字节级一致，可用现有协议测试兜底）
   - 完成标准: `cargo build 2>&1 | grep -c '^warning'` = 0
 
-- [ ] Q2 clippy 基线并清零
+- [x] Q2 clippy 基线并清零（基线 58 → `--all-targets -- -D warnings` rc=0 + [lints.rust] warnings=deny，2026-09-23）
   - 先跑 `cargo clippy --all-targets 2>&1 | tail -20` 记录基线数量到 PROGRESS.md
   - 逐条修复（优先 correctness → perf → style）；确属误报用 `#[allow]` + 一行注释说明理由
   - 完成标准: `cargo clippy --all-targets -- -D warnings` exit 0

@@ -13,13 +13,13 @@ impl TableCipher {
         let digest = md5(password);
 
         let mut key: u64 = 0;
-        for i in 0..8 {
-            key = key.wrapping_add(OFFSET_ROL(digest[i], i));
+        for (i, &b) in digest.iter().take(8).enumerate() {
+            key = key.wrapping_add(OFFSET_ROL(b, i));
         }
 
         let mut enc_table = [0u8; 256];
-        for i in 0..256 {
-            enc_table[i] = i as u8;
+        for (i, slot) in enc_table.iter_mut().enumerate() {
+            *slot = i as u8;
         }
 
         for i in 1..1024u64 {

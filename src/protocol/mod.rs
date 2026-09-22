@@ -60,6 +60,12 @@ pub struct GlobalData {
     pub connection_id: u32,
 }
 
+impl Default for GlobalData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GlobalData {
     pub fn new() -> Self {
         use rand::RngCore;
@@ -129,7 +135,7 @@ impl XorShift128Plus {
     pub fn new(seed: u64) -> Self {
         let mut s = [0u64; 2];
         s[0] = seed | 0x100000000;
-        s[1] = ((seed as u64) << 32) | 0x1;
+        s[1] = (seed << 32) | 0x1;
         Self { s }
     }
 
@@ -146,7 +152,7 @@ impl XorShift128Plus {
         Self { s }
     }
 
-    pub fn next(&mut self) -> u64 {
+    pub fn next_u64(&mut self) -> u64 {
         let x = self.s[0];
         let y = self.s[1];
         self.s[0] = y;
@@ -167,7 +173,7 @@ impl XorShift128Plus {
         filled[1] = (datalen >> 8) as u8;
         let mut ctx = Self::from_bytes(&filled);
         for _ in 0..4 {
-            ctx.next();
+            ctx.next_u64();
         }
         ctx
     }
@@ -226,7 +232,7 @@ mod tests {
     #[test]
     fn test_xorshift128plus() {
         let mut rng = XorShift128Plus::new(12345);
-        let val = rng.next();
+        let val = rng.next_u64();
         assert!(val != 0);
     }
 

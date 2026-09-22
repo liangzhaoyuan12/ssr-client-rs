@@ -34,8 +34,8 @@ impl AuthSHA1V2 {
 
     fn get_rand_len(&mut self, datalength: usize) -> usize {
         if datalength > 1300 { 0 }
-        else if datalength > 400 { ((self.rng.next() & 0x7F) + 1) as usize }
-        else { ((self.rng.next() & 0x3FF) + 1) as usize }
+        else if datalength > 400 { ((self.rng.next_u64() & 0x7F) + 1) as usize }
+        else { ((self.rng.next_u64() & 0x3FF) + 1) as usize }
     }
 
     fn pack_data(&mut self, data: &[u8]) -> Vec<u8> {
@@ -138,7 +138,7 @@ impl Protocol for AuthSHA1V2 {
                 return Ok(output);
             }
             let length = ((self.recv_buffer[4] as usize) << 8) | self.recv_buffer[5] as usize;
-            if length >= 8192 || length < 29 {
+            if !(29..8192).contains(&length) {
                 self.recv_buffer.clear();
                 return Err(crate::error::SsrError::Protocol("auth_sha1_v2: invalid auth length".into()));
             }
@@ -167,7 +167,7 @@ impl Protocol for AuthSHA1V2 {
 
         while self.recv_buffer.len() > 2 {
             let length = ((self.recv_buffer[0] as usize) << 8) | self.recv_buffer[1] as usize;
-            if length >= 8192 || length < 7 {
+            if !(7..8192).contains(&length) {
                 self.recv_buffer.clear();
                 return Err(crate::error::SsrError::Protocol("auth_sha1_v2: invalid length".into()));
             }

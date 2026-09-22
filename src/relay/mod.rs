@@ -1,7 +1,7 @@
-/// TCP relay for bidirectional data forwarding between local SOCKS5 client
-/// and remote SSR server.
-///
-/// Uses tokio::io for efficient async bidirectional data transfer.
+// TCP relay for bidirectional data forwarding between local SOCKS5 client
+// and remote SSR server.
+//
+// Uses tokio::io for efficient async bidirectional data transfer.
 
 use tokio::io;
 use tokio::net::TcpStream;
@@ -122,7 +122,7 @@ pub async fn relay_streams(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
 
     #[test]
     fn test_relay_buffer_size_default() {
@@ -131,8 +131,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_streams_empty() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let (mut reader, mut writer) = tokio::io::duplex(1024);
+        use tokio::io::AsyncReadExt;
+        let (mut reader, writer) = tokio::io::duplex(1024);
         let mut buf = [0u8; 1024];
         // Write nothing, just verify split works
         drop(writer);

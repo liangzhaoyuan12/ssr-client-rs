@@ -1,13 +1,13 @@
 pub mod udp_relay;
 
-/// Local SOCKS5 proxy server and SSR client orchestrator.
-///
-/// The SsrClient:
-/// 1. Starts a local TCP listener (SOCKS5 server)
-/// 2. Accepts incoming SOCKS5 connections
-/// 3. Performs SOCKS5 handshake (method negotiation + CONNECT)
-/// 4. Establishes a tunnel to the remote SSR server
-/// 5. Relays traffic through the tunnel
+// Local SOCKS5 proxy server and SSR client orchestrator.
+//
+// The SsrClient:
+// 1. Starts a local TCP listener (SOCKS5 server)
+// 2. Accepts incoming SOCKS5 connections
+// 3. Performs SOCKS5 handshake (method negotiation + CONNECT)
+// 4. Establishes a tunnel to the remote SSR server
+// 5. Relays traffic through the tunnel
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

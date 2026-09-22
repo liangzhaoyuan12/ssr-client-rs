@@ -1,10 +1,9 @@
-/// Full-coverage tests for all 28 cipher methods, 14 protocols, and 6 obfs methods.
-/// Each test verifies byte-level roundtrip correctness.
+// Full-coverage tests for all 28 cipher methods, 14 protocols, and 6 obfs methods.
+// Each test verifies byte-level roundtrip correctness.
 
 use ssr_client_rs::crypto::cipher_env::CipherEnv;
-use ssr_client_rs::crypto::types::CipherType;
 use ssr_client_rs::protocol::{Protocol, ServerInfo};
-use ssr_client_rs::obfs::{self, Obfs};
+use ssr_client_rs::obfs::Obfs;
 
 fn si() -> ServerInfo {
     ServerInfo { key: vec![0x42u8; 16], iv: vec![0x24u8; 16], ..Default::default() }
@@ -105,7 +104,7 @@ fn test_protocol_large(proto: &mut dyn Protocol, name: &str) {
 #[test]
 fn test_proto_auth_sha1_v4() {
     let mut proto = ssr_client_rs::protocol::auth_sha1_v4::AuthSHA1V4::new(si());
-    let data = format!("protocol test data for auth_sha1_v4");
+    let data = "protocol test data for auth_sha1_v4".to_string();
     // Phase 1: trigger auth header
     let _header = proto.client_pre_encrypt(AUTH_V4_ADDR_PAYLOAD).unwrap();
     // Phase 2: send actual data
@@ -177,7 +176,6 @@ fn test_obfs_http_mix() {
     let _encoded = h.client_encode(data).unwrap();
 }
 
-#[test]
 #[test]
 fn test_obfs_tls_ticket_auth() {
     let mut t = ssr_client_rs::obfs::tls_ticket::Tls12TicketAuthObfs::new(
@@ -408,13 +406,13 @@ mod edge_cases {
     fn edge_udp_domain_len_overrun() {
         // domain len 255 but buffer ends before port
         let mut d = vec![0u8, 0, 0, 0x03, 255];
-        d.extend(std::iter::repeat(b'x').take(10));
+        d.extend(std::iter::repeat_n(b'x', 10));
         assert!(parse_udp_datagram(&d).is_err());
     }
     #[test]
     fn edge_udp_ipv6_truncated() {
         let mut d = vec![0u8, 0, 0, 0x04];
-        d.extend(std::iter::repeat(0u8).take(10));
+        d.extend(std::iter::repeat_n(0u8, 10));
         assert!(parse_udp_datagram(&d).is_err());
     }
     #[test]
@@ -535,9 +533,9 @@ mod edge_cases {
     #[test]
     fn edge_config_port_out_of_range() {
         // 70000 > u16::MAX: must not wrap silently into a valid port
-        match config_from_json("{\"server_port\": 70000}") {
-            Ok(c) => assert_eq!(c.server_port, 0, "out-of-range port must not wrap"),
-            Err(_) => {} // rejecting is also fine
+        // Accepting with port 0 (and clamping) or rejecting are both fine.
+        if let Ok(c) = config_from_json("{\"server_port\": 70000}") {
+            assert_eq!(c.server_port, 0, "out-of-range port must not wrap");
         }
     }
     #[test]

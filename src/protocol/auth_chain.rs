@@ -40,12 +40,12 @@ impl Shift128plusCtx {
         ctx.v[0] = u64::from_le_bytes(fill[0..8].try_into().unwrap());
         ctx.v[1] = u64::from_le_bytes(fill[8..16].try_into().unwrap());
         for _ in 0..4 {
-            ctx.next();
+            ctx.next_u64();
         }
         ctx
     }
 
-    fn next(&mut self) -> u64 {
+    pub fn next_u64(&mut self) -> u64 {
         let x = self.v[0];
         let y = self.v[1];
         self.v[0] = y;
@@ -116,15 +116,15 @@ fn rand_len_a(
     }
     *random = Shift128plusCtx::from_bin_datalen(last_hash, datalength);
     if datalength > 1300 {
-        return (random.next() % 31) as usize;
+        return (random.next_u64() % 31) as usize;
     }
     if datalength > 900 {
-        return (random.next() % 127) as usize;
+        return (random.next_u64() % 127) as usize;
     }
     if datalength > 400 {
-        return (random.next() % 521) as usize;
+        return (random.next_u64() % 521) as usize;
     }
-    (random.next() % 1021) as usize
+    (random.next_u64() % 1021) as usize
 }
 
 /// C: auth_chain_b_get_rand_len (auth_chain.c:1162-1202). Uses the
@@ -147,13 +147,13 @@ fn rand_len_b(
     let overhead = ctx.overhead as usize;
 
     let pos = find_pos(&b.data_size_list, (datalength + overhead) as i32);
-    let final_pos = pos + (random.next() as usize) % b.data_size_list.len();
+    let final_pos = pos + (random.next_u64() as usize) % b.data_size_list.len();
     if final_pos < b.data_size_list.len() {
         return (b.data_size_list[final_pos] as usize).saturating_sub(datalength + overhead);
     }
 
     let pos2 = find_pos(&b.data_size_list2, (datalength + overhead) as i32);
-    let final_pos2 = pos2 + (random.next() as usize) % b.data_size_list2.len();
+    let final_pos2 = pos2 + (random.next_u64() as usize) % b.data_size_list2.len();
     if final_pos2 < b.data_size_list2.len() {
         return (b.data_size_list2[final_pos2] as usize).saturating_sub(datalength + overhead);
     }
@@ -162,15 +162,15 @@ fn rand_len_b(
     }
 
     if datalength > 1300 {
-        return (random.next() % 31) as usize;
+        return (random.next_u64() % 31) as usize;
     }
     if datalength > 900 {
-        return (random.next() % 127) as usize;
+        return (random.next_u64() % 127) as usize;
     }
     if datalength > 400 {
-        return (random.next() % 521) as usize;
+        return (random.next_u64() % 521) as usize;
     }
-    (random.next() % 1021) as usize
+    (random.next_u64() % 1021) as usize
 }
 
 /// C: auth_chain_c_get_rand_len (auth_chain.c:1270-1297). Unlike A/B, the
@@ -196,20 +196,20 @@ fn rand_len_c(
             return 0;
         }
         if datalength > 1300 {
-            return (random.next() % 31) as usize;
+            return (random.next_u64() % 31) as usize;
         }
         if datalength > 900 {
-            return (random.next() % 127) as usize;
+            return (random.next_u64() % 127) as usize;
         }
         if datalength > 400 {
-            return (random.next() % 521) as usize;
+            return (random.next_u64() % 521) as usize;
         }
-        return (random.next() % 1021) as usize;
+        return (random.next_u64() % 1021) as usize;
     }
 
     // other_data_size < list0.last() guarantees find_pos < len (no %0 here)
     let pos = find_pos(&c.data_size_list0, other_data_size as i32);
-    let final_pos = pos + (random.next() as usize) % (c.data_size_list0.len() - pos);
+    let final_pos = pos + (random.next_u64() as usize) % (c.data_size_list0.len() - pos);
     (c.data_size_list0[final_pos] as usize).saturating_sub(other_data_size)
 }
 
@@ -236,7 +236,7 @@ fn rand_len_d(
 
     *random = Shift128plusCtx::from_bin_datalen(last_hash, datalength);
     let pos = find_pos(&c.data_size_list0, other_data_size as i32);
-    let final_pos = pos + (random.next() as usize) % (c.data_size_list0.len() - pos);
+    let final_pos = pos + (random.next_u64() as usize) % (c.data_size_list0.len() - pos);
     (c.data_size_list0[final_pos] as usize).saturating_sub(other_data_size)
 }
 
@@ -319,8 +319,8 @@ impl AuthChainA {
             rand_len_fn: rand_len_a,
             rand_len_ctx: RandLenCtx { overhead: server_info.overhead, b: None, c: None },
         };
-        local.random_client.next();
-        local.random_server.next();
+        local.random_client.next_u64();
+        local.random_server.next_u64();
 
         let mut ctx = Self {
             global: GlobalData::new(),
@@ -362,7 +362,7 @@ impl AuthChainA {
 
     fn get_rand_start_pos(rand_len: usize, random: &mut Shift128plusCtx) -> usize {
         if rand_len > 0 {
-            return (random.next() % 8589934609) as usize % rand_len;
+            return (random.next_u64() % 8589934609) as usize % rand_len;
         }
         0
     }
@@ -394,7 +394,7 @@ impl AuthChainA {
     /// 16-byte hash (no warmup), then `next() % 127`.
     fn udp_rand_len(ctx: &mut Shift128plusCtx, hash: &[u8; 16]) -> usize {
         *ctx = Shift128plusCtx::from_bin(hash);
-        (ctx.next() % 127) as usize
+        (ctx.next_u64() % 127) as usize
     }
 
     /// C: auth_chain_a_client_udp_pre_encrypt (auth_chain.c:1533-1606).
@@ -504,7 +504,7 @@ impl AuthChainA {
         // Random padding + encrypted data
         let rnd_data: Vec<u8> = (0..rand_len).map(|_| rand::random::<u8>()).collect();
 
-        if data.len() > 0 {
+        if !data.is_empty() {
             let start_pos = Self::get_rand_start_pos(rand_len, &mut self.local.random_client);
             let encrypted = self.encrypt_buffer(data);
             out[2..2 + start_pos].copy_from_slice(&rnd_data[..start_pos]);
@@ -790,15 +790,15 @@ impl AuthChainB {
     /// C: auth_chain_b_init_data_size (auth_chain.c:1121-1155)
     fn init_data_size(key: &[u8]) -> AuthChainBContext {
         let mut random = Shift128plusCtx::from_bin(key);
-        let list_len = (random.next() % 8 + 4) as usize;
+        let list_len = (random.next_u64() % 8 + 4) as usize;
         let mut data_size_list: Vec<i32> = (0..list_len)
-            .map(|_| (random.next() % 2340 % 2040 % 1440) as i32)
+            .map(|_| (random.next_u64() % 2340 % 2040 % 1440) as i32)
             .collect();
         data_size_list.sort();
 
-        let list2_len = (random.next() % 16 + 8) as usize;
+        let list2_len = (random.next_u64() % 16 + 8) as usize;
         let mut data_size_list2: Vec<i32> = (0..list2_len)
-            .map(|_| (random.next() % 2340 % 2040 % 1440) as i32)
+            .map(|_| (random.next_u64() % 2340 % 2040 % 1440) as i32)
             .collect();
         data_size_list2.sort();
 
@@ -859,9 +859,9 @@ impl AuthChainC {
     /// C: auth_chain_c_init_data_size (auth_chain.c:1240-1263)
     fn init_data_size(key: &[u8]) -> AuthChainCContext {
         let mut random = Shift128plusCtx::from_bin(key);
-        let list_len = (random.next() % (8 + 16) + (4 + 8)) as usize;
+        let list_len = (random.next_u64() % (8 + 16) + (4 + 8)) as usize;
         let mut data_size_list0: Vec<i32> = (0..list_len)
-            .map(|_| (random.next() % 2340 % 2040 % 1440) as i32)
+            .map(|_| (random.next_u64() % 2340 % 2040 % 1440) as i32)
             .collect();
         data_size_list0.sort();
         AuthChainCContext { data_size_list0 }
@@ -920,16 +920,16 @@ impl AuthChainD {
     /// and len < 64, re-sorting once at the end.
     fn init_data_size(key: &[u8]) -> AuthChainCContext {
         let mut random = Shift128plusCtx::from_bin(key);
-        let list_len = (random.next() % (8 + 16) + (4 + 8)) as usize;
+        let list_len = (random.next_u64() % (8 + 16) + (4 + 8)) as usize;
         let mut data_size_list0: Vec<i32> = (0..64) // max size
-            .map(|i| if i < list_len { (random.next() % 2340 % 2040 % 1440) as i32 } else { 0 })
+            .map(|i| if i < list_len { (random.next_u64() % 2340 % 2040 % 1440) as i32 } else { 0 })
             .collect();
         data_size_list0[..list_len].sort();
 
         // Check and patch: ensure last item >= 1300
         let mut current_len = list_len;
         while *data_size_list0[..current_len].last().unwrap_or(&0) < 1300 && current_len < 64 {
-            data_size_list0[current_len] = (random.next() % 2340 % 2040 % 1440) as i32;
+            data_size_list0[current_len] = (random.next_u64() % 2340 % 2040 % 1440) as i32;
             current_len += 1;
         }
         data_size_list0[..current_len].sort();
@@ -1093,15 +1093,15 @@ impl AuthChainF {
         }
 
         let mut random = Shift128plusCtx::from_bin(&new_key);
-        let list_len = (random.next() % (8 + 16) + (4 + 8)) as usize;
+        let list_len = (random.next_u64() % (8 + 16) + (4 + 8)) as usize;
         let mut data_size_list0: Vec<i32> = (0..64)
-            .map(|i| if i < list_len { (random.next() % 2340 % 2040 % 1440) as i32 } else { 0 })
+            .map(|i| if i < list_len { (random.next_u64() % 2340 % 2040 % 1440) as i32 } else { 0 })
             .collect();
         data_size_list0[..list_len].sort();
 
         let mut current_len = list_len;
         while *data_size_list0[..current_len].last().unwrap_or(&0) < 1300 && current_len < 64 {
-            data_size_list0[current_len] = (random.next() % 2340 % 2040 % 1440) as i32;
+            data_size_list0[current_len] = (random.next_u64() % 2340 % 2040 % 1440) as i32;
             current_len += 1;
         }
         data_size_list0[..current_len].sort();
@@ -1139,6 +1139,15 @@ impl Protocol for AuthChainF {
     }
 }
 
+// SAFETY: These types contain raw pointers (for C FFI compatibility), but
+// they are never used in async contexts that require Send. Adding Send here
+// allows them to exist as trait objects without blocking the Protocol trait.
+unsafe impl Send for AuthChainA {}
+unsafe impl Send for AuthChainB {}
+unsafe impl Send for AuthChainC {}
+unsafe impl Send for AuthChainD {}
+unsafe impl Send for AuthChainE {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1170,7 +1179,7 @@ mod tests {
     #[test]
     fn test_shift128plus() {
         let mut ctx = Shift128plusCtx::from_bin(&[1u8; 16]);
-        let val = ctx.next();
+        let val = ctx.next_u64();
         assert!(val != 0);
     }
 
@@ -1189,12 +1198,3 @@ mod tests {
         assert_eq!(AuthChainF::parse_key_change_interval("#3600"), 3600);
     }
 }
-
-// SAFETY: These types contain raw pointers (for C FFI compatibility), but
-// they are never used in async contexts that require Send. Adding Send here
-// allows them to exist as trait objects without blocking the Protocol trait.
-unsafe impl Send for AuthChainA {}
-unsafe impl Send for AuthChainB {}
-unsafe impl Send for AuthChainC {}
-unsafe impl Send for AuthChainD {}
-unsafe impl Send for AuthChainE {}

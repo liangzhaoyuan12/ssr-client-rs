@@ -4,6 +4,12 @@ use super::Obfs;
 /// Plain obfuscation — pass-through, no modification.
 pub struct PlainObfs;
 
+impl Default for PlainObfs {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PlainObfs {
     pub fn new() -> Self {
         Self

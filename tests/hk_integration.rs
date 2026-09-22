@@ -1,8 +1,7 @@
-/// Integration tests using hk.json server parameters.
+// Integration tests using hk.json server parameters.
 
 use ssr_client_rs::config::SsrClientConfig;
 use ssr_client_rs::crypto::cipher_env::CipherEnv;
-use ssr_client_rs::protocol::auth_aes128::AuthAES128;
 use ssr_client_rs::protocol::auth_sha1::AuthSHA1;
 use ssr_client_rs::protocol::auth_sha1_v2::AuthSHA1V2;
 use ssr_client_rs::protocol::auth_sha1_v4::AuthSHA1V4;
@@ -144,8 +143,6 @@ fn test_hk_auth_sha1_v4_pipeline() {
     assert_eq!(plain, data);
 
 }
-
-#[test]
 
 #[test]
 fn test_hk_tls_ticket_obfs() {

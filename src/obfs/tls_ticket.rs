@@ -252,13 +252,13 @@ impl Obfs for Tls12TicketAuthObfs {
         if (self.handshake_status & 0x04) != 0 {
             let mut start = 0;
             while self.send_id <= 4 && buf.len() - start > 256 {
-                let len = ((rand::random::<usize>() % 512 + 64)).min(buf.len() - start);
+                let len = (rand::random::<usize>() % 512 + 64).min(buf.len() - start);
                 result.extend_from_slice(&pack_data(&buf[start..start + len]));
                 start += len;
                 self.send_id += 1;
             }
             while buf.len() - start > 2048 {
-                let len = ((rand::random::<usize>() % 4096 + 100)).min(buf.len() - start);
+                let len = (rand::random::<usize>() % 4096 + 100).min(buf.len() - start);
                 result.extend_from_slice(&pack_data(&buf[start..start + len]));
                 start += len;
             }
@@ -539,7 +539,7 @@ mod tests {
     fn test_rng_range() {
         for _ in 0..100 {
             let val = rng_range(10, 20);
-            assert!(val >= 10 && val < 20);
+            assert!((10..20).contains(&val));
         }
     }
 

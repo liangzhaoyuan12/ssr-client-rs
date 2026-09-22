@@ -248,3 +248,29 @@
 - clippy 基线（Q2 输入）: `cargo clippy --all-targets` = **58 warnings**
   （Top: manual !Range::contains ×9、useless format! ×5、empty line after
   doc comment ×5、repeat().take() ×3…）
+
+### ✅ Q2 clippy 清零（2026-09-23）
+
+- **基线 58 → 0**: `cargo clippy --all-targets -- -D warnings` **rc=0**
+- 处理顺序（GOALS: correctness → perf → style，多数自动修）:
+  1. `cargo clippy --fix --all-targets --allow-dirty --allow-staged` 自动应用
+     ~37 条（Range::contains、useless format!、repeat().take()、Default impl、
+     单 pattern match→if let、lifetimes elide、unnecessary mut/parens…）
+  2. 手修 16 条:
+     - 文件头 `///` doc 后空行（5 处）→ 改 `//`（挂在 `pub mod` 后的悬空 doc）
+     - `large_enum_variant` ×2: **Box `Aead(AeadEncryptCtx)`**；Box 后仍报 →
+       真正最大变体是 **Blowfish（~4KB S-box 状态）**，按 clippy 建议
+       `Box<BlowfishCFB{Enc,Dec}>`，4192→~1KB
+     - `&mut Vec` → `&mut [_]`（encrypt/decrypt_in_place 签名）
+     - table.rs 两处 index 循环 → `iter().enumerate()` / `iter_mut()`
+       （字节行为不变，e2e 兜底）
+     - `Shift128plusCtx::next` → `next_u64`（避免混淆 Iterator::next；
+       auth_chain.rs 有自己的同名 struct，两处定义 + 51 调用点同步）
+     - 测试重复 `#[test]` 属性 ×2 去重、resilience 未读 `cli_port` 字段删除
+- **测试数 239 → 237 的说明**: 两个 `#[test]` 各写了两遍，rustc 把同一 fn
+  注册两次；去重后 `--list` 确认两测试各存 1 份、0 failed，覆盖未变
+- **固化**: Cargo.toml 加 `[lints.rust] warnings = "deny"`（rustc 1.97 ≫ MSRV
+  1.74），今后任何新 rustc warning 直接构建失败
+- **e2e 回归（字节级）**: 矩阵 39/51+12SKIP 0 FAIL（覆盖改过的
+  table/blowfish/aead 路径）、UDP e2e ALL_PASS、resilience 4/4、
+  `cargo test` 237/0；release 构建 0 warning 0 error

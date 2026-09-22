@@ -13,6 +13,12 @@ pub struct AuthSimple {
     rng: XorShift128Plus,
 }
 
+impl Default for AuthSimple {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AuthSimple {
     pub fn new() -> Self {
         use rand::RngCore;
@@ -29,7 +35,7 @@ impl AuthSimple {
     }
 
     fn pack_data(&mut self, data: &[u8]) -> Vec<u8> {
-        let rand_len = ((self.rng.next() & 0xF) + 1) as usize;
+        let rand_len = ((self.rng.next_u64() & 0xF) + 1) as usize;
         let out_size = rand_len + data.len() + 6;
         let mut out = vec![0u8; out_size];
 
@@ -48,7 +54,7 @@ impl AuthSimple {
     }
 
     fn pack_auth_data(&mut self, data: &[u8]) -> Vec<u8> {
-        let rand_len = ((self.rng.next() & 0xF) + 1) as usize;
+        let rand_len = ((self.rng.next_u64() & 0xF) + 1) as usize;
         let out_size = rand_len + data.len() + 6 + 12;
         let mut out = vec![0u8; out_size];
 
@@ -126,7 +132,7 @@ impl Protocol for AuthSimple {
         while self.recv_buffer.len() > 2 {
             let length = ((self.recv_buffer[0] as usize) << 8) | self.recv_buffer[1] as usize;
 
-            if length >= 8192 || length < 7 {
+            if !(7..8192).contains(&length) {
                 self.recv_buffer.clear();
                 return Err(crate::error::SsrError::Protocol("auth_simple: invalid length".into()));
             }

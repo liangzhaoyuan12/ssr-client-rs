@@ -33,3 +33,7 @@ log = "0.4"
 tokio-test = "0.4"
 hex = "0.4"
 proptest = "1.11.0"
+
+# Q2: freeze the zero-warning baseline — any new rustc warning fails the build.
+[lints.rust]
+warnings = "deny"

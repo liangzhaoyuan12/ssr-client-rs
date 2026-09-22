@@ -33,7 +33,7 @@ impl AuthSHA1 {
     }
 
     fn pack_data(&mut self, data: &[u8]) -> Vec<u8> {
-        let rand_len = ((self.rng.next() & 0x7F) + 1) as usize;
+        let rand_len = ((self.rng.next_u64() & 0x7F) + 1) as usize;
         let out_size = rand_len + data.len() + 6;
         let mut out = vec![0u8; out_size];
         out[0] = (out_size >> 8) as u8;
@@ -48,7 +48,7 @@ impl AuthSHA1 {
     }
 
     fn pack_auth_data(&mut self, data: &[u8]) -> Vec<u8> {
-        let rand_len = ((self.rng.next() & 0x7F) + 1) as usize;
+        let rand_len = ((self.rng.next_u64() & 0x7F) + 1) as usize;
         // Auth: CRC32(4) + length(2) + rand_len(1) + random(rand_len) + timestamp(4) + client_id(4) + connection_id(4) + data + HMAC(10)
         let data_offset = 4 + 2 + 1 + rand_len + 12;
         let out_size = data_offset + data.len() + HMAC_SHA1_LEN;
@@ -118,7 +118,7 @@ impl Protocol for AuthSHA1 {
                 return Ok(output);
             }
             let length = ((self.recv_buffer[4] as usize) << 8) | self.recv_buffer[5] as usize;
-            if length >= 8192 || length < 7 {
+            if !(7..8192).contains(&length) {
                 self.recv_buffer.clear();
                 return Err(crate::error::SsrError::Protocol("auth_sha1: invalid auth length".into()));
             }
@@ -143,7 +143,7 @@ impl Protocol for AuthSHA1 {
 
         while self.recv_buffer.len() > 2 {
             let length = ((self.recv_buffer[0] as usize) << 8) | self.recv_buffer[1] as usize;
-            if length >= 8192 || length < 7 {
+            if !(7..8192).contains(&length) {
                 self.recv_buffer.clear();
                 return Err(crate::error::SsrError::Protocol("auth_sha1: invalid length".into()));
             }
