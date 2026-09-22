@@ -461,3 +461,24 @@
 **回归全绿**: build/test 237-0、clippy -D rc=0、fmt 0、panic 脚本 rc=0、
 cargo doc 0、矩阵 39/51+12SKIP 0 FAIL、UDP e2e ALL_PASS、resilience 4/4、
 release 1,184,520 字节（移除依赖后 −44 字节）
+
+### ✅ Q10 Cargo.toml 发布元数据（2026-09-23）
+
+- `[package]` 补齐 6 项:
+  - `description`: byte-compatible SSR client library …
+  - `license = "GPL-3.0-or-later"` —— **依据上游**: ssr-n/LICENSE 为 GPLv3，
+    且源码头 "either version 3 … or (at your option) any later version"
+    （shadowsocks-libev 血统）→ or-later；移植库必须同许可证
+  - `repository = "https://cnb.cool/liangzhaoyuan12/ssr-client-rs"`（git remote 实测）
+  - `readme = "README.md"`、`keywords = [shadowsocksr, ssr, proxy, socks5,
+    cryptography]`、`categories = [network-programming, cryptography]`
+- **LICENSE 文件**: 直接复制 `ssr-n/LICENSE`（GPLv3 全文 675 行）到仓库根，
+  与 license 字段一致 —— 同时满足 M3 的 "LICENSE 与 Cargo.toml 一致"
+- **CHANGELOG.md** 新建: Keep a Changelog 格式 + **0.x semver 兼容性承诺**
+  （0.x 允许 breaking、1.0 起严格 semver；字节级协议兼容算 feature 走 patch）
+  + 0.1.0 首发条目（功能范围、已知限制 cast5/idea/rc2/seed 未实现与
+  AEAD hk 待复核、4 个协议的 server 侧 SKIP 说明）—— 同时满足 M3 内容要求
+- **最强验证 `cargo package --allow-dirty` rc=0**: 元数据完整、LICENSE 被打包、
+  打包产物独立重编译通过（`--list` 4173 行含 LICENSE/CHANGELOG/README）
+- **门禁**: build 0/0、clippy -D rc=0、fmt 0、panic 脚本 rc=0、cargo doc 0、
+  cargo test 237/0（元数据阶段无代码变更，Q9 的矩阵 39/51 0 FAIL 结果仍有效）

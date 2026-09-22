@@ -237,7 +237,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
   - 加 `rust-version`（实际测得 MSRV 后填）；`cargo update` 后跑全测
   - 有网时跑 `cargo audit`（走 proxychains4）；结果记录 PROGRESS.md
 
-- [ ] Q10 Cargo.toml 发布元数据
+- [x] Q10 Cargo.toml 发布元数据（description/license=GPL-3.0-or-later/repository/keywords/categories/readme + CHANGELOG.md semver 承诺 + LICENSE，`cargo package` rc=0，2026-09-23）
   - 补 `description` / `license`（与 LICENSE 文件一致）/ `repository` / `keywords` / `categories` / `readme`
   - 版本策略: 主线首发 `0.1.0`，写进 CHANGELOG 的兼容性承诺（semver，0.x 允许 breaking）
 

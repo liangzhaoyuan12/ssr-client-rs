@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 # MSRV floor: std::iter::repeat_n (1.82) is the newest std API used.
 rust-version = "1.82"
+description = "Byte-compatible ShadowsocksR (SSR-N) client library: crypto, protocol, obfs and async TCP/UDP relay, ported from ssr-n"
+license = "GPL-3.0-or-later"
+repository = "https://cnb.cool/liangzhaoyuan12/ssr-client-rs"
+readme = "README.md"
+keywords = ["shadowsocksr", "ssr", "proxy", "socks5", "cryptography"]
+categories = ["network-programming", "cryptography"]
 
 [dependencies]
 tokio = { version = "1", features = ["net", "rt-multi-thread", "macros", "io-util", "time", "sync", "signal"] }
