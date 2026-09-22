@@ -6,12 +6,13 @@
 
 ## 项目概述
 
-用 Rust 从零实现 SSR (ShadowsocksR) 客户端库，目标是完全兼容 ssr-n C 服务端，可作为其他项目（GTK4、Tauri 等）的依赖使用。
+用 Rust 从零实现 SSR (ShadowsocksR) 客户端库，目标是完全兼容 ssr-n C 服务端，可作为其他项目（GTK4、Tauri 等）的依赖使用。**当前目标：达到可 push 进主线的发布质量。**
 
 - **仓库**: `/home/liangzhaoyuan12/work/rs/ssr-client-rs`
 - **服务端**: `/opt/ssr/ssr-server` (LoongArch64 ELF, 配置在 `/opt/ssr/config.json`)
 - **参考实现**: `ssr-n/` 目录（C 源码）
 - **迁移文档**: `MIGRATION.md`
+- **进度记录**: `PROGRESS.md`
 
 ---
 
@@ -23,436 +24,313 @@
 
 1. **读取 PROGRESS.md** — 确认上次完成到哪一步，从那里继续，不重做已完成的工作
 2. **读取 GOALS.md 本文件** — 确认当前阶段编号和任务列表
-3. **运行 `cargo test --list`** — 确认当前有多少测试，用数字而非记忆
+3. **运行 `cargo test`** — 确认当前测试数与通过状态，用数字而非记忆
 4. **运行 `git log --oneline -5`** — 确认最近提交，不重复已提交的修复
 
 ### 工作中（每完成一个小任务必须）
 
 1. **写 PROGRESS.md** — 每修一个 bug、每完成一个测试，立即更新进度文件，记录：日期时间、做了什么、涉及的文件和行号、测试结果
-2. **不重复修复** — 如果 PROGRESS.md 记录了 "auth_sha1_v4 roundtrip 已修复"，不要再修它
+2. **不重复修复** — 如果 PROGRESS.md 记录某项已修复，不要再修它
 3. **不凭记忆修改代码** — 修改任何文件前，必须先 `read_file` 读取当前内容，不凭记忆写代码
-4. **不凭记忆声称通过** — 每次声称 "测试通过" 前，必须实际运行 `cargo test` 并看到输出
+4. **不凭记忆声称通过** — 每次声称"测试通过"前，必须实际运行 `cargo test` 并看到输出
 5. **不重复 commit** — 修改前先 `git log --oneline -3` 检查是否已提交
 
 ### 防止幻觉的硬性约束
 
 - **不要修改已通过的测试** — 除非发现它们本身有 bug
 - **不要凭空添加新模块** — 除非在本文档的任务列表中明确列出
-- **不要声称 "已修复" 而没跑测试** — 必须有实际 `cargo test` 输出
+- **不要声称"已修复"而没跑测试** — 必须有实际 `cargo test` 输出
 - **不要重复同一个修复尝试** — 如果同一个修复尝试 3 次仍失败，在 PROGRESS.md 记录阻塞原因，跳到下一个任务
 - **不要在一次会话中做太多事** — 一次会话专注 2-3 个明确任务，做完就更新进度
+- **不要改代码不跑门禁** — 每次改动后至少跑 `cargo build 2>&1 | grep -c error`；触及协议层再跑 `cargo test`
 
 ---
 
 ## 当前状态快照（截至 2026-09-22）
 
-### 测试情况
+### 基线数字（改进前的测量值，作为各 Phase 的对照组）
 
-- 单元测试: 122 passed, 0 failed
-- hk_integration: 15 passed, 0 failed
-- full_coverage: 46 passed, 0 failed
-- **总计: 183 passed, 0 failed**
+| 项目 | 当前值 | 目标值 | 所属 Phase |
+|------|--------|--------|-----------|
+| 测试总数 | 186 passed / 0 failed | 见 T 阶段增量 | T |
+| 源码规模 | 9745 行 (src+tests) | — | — |
+| `cargo build` warning | **35 个** | **0** | Q1 |
+| `cargo clippy` | 未建立基线 | `-D warnings` 全绿 | Q2 |
+| `cargo fmt --check` | 未执行 | 全绿 | Q3 |
+| unwrap/expect/panic (src, grep) | **138 处**（需分拣生产路径/测试代码） | 生产路径 0，例外须书面豁免 | Q4 |
+| `unsafe` | **5 处** | 0 或逐条 SAFETY 论证 | Q5 |
+| `[profile.release]` | **未配置** | 配置齐（LTO/strip/opt-level） | Q6 |
+| 空闲 RSS / 线程数 / fd 数 | 未测量 | 见 R1 目标 | R |
+| 二进制体积 | 未测量 | 见 R5 目标 | R |
+| 基准吞吐 | 无 benchmark | criterion 基线 + 对标 C | P |
+| e2e 测试资产 | **散落在 /tmp（会被清掉）** | 全部入库 `tests/e2e/` 或 `tools/` | T3 |
+| CI | 无 | GitHub Actions 四门禁 | M1 |
 
-### 已实现（可工作的，经真实服务器验证）
+### 已实现（经真实服务器验证）
 
-- **生产配置**: aes-256-cfb + auth_aes128_sha1 + tls1.2_ticket_auth — 真实服务器 192.0.2.1:2800 已验证通过（httpbin 200, github 200, google 204, 5MB 下载 4.52 MB/s）
+- **生产配置**: aes-256-cfb + auth_aes128_sha1 + tls1.2_ticket_auth — 真实服务器 192.0.2.1:2800 已验证（httpbin 200, github 200, google 204, 5MB 下载 4.52 MB/s）
 - **流加密 (16/28)**: none, table, rc4, rc4-md5-6, rc4-md5, aes-128/192/256-cfb, aes-128/192/256-ctr, bf-cfb, des-cfb, salsa20, chacha20, chacha20-ietf
-- **AEAD (5/28)**: aes-128/192/256-gcm, chacha20-ietf-poly1305, xchacha20-ietf-poly1305 — 模块完成，端到端未互通（服务端二进制与源码 obfs 实现不一致）
-- **协议 (12/14)**: origin, verify_simple, auth_simple, auth_sha1, auth_sha1_v2, auth_aes128_md5, auth_aes128_sha1, auth_chain_a~f
-- **混淆 (5/6)**: plain, http_simple, http_post, http_mix, tls1.2_ticket_auth, tls1.2_ticket_fastauth
-- SOCKS5 客户端, TCP 中继, JSON 配置解析
+- **AEAD (5/28)**: aes-128/192/256-gcm, chacha20-ietf-poly1305, xchacha20-ietf-poly1305 — 本地 e2e 通过（ssr-server plain+origin）；hk.json 生产组合（AEAD+tls obfs）因服务端二进制与源码不一致未互通
+- **协议 (14/14)**: origin, verify_simple, auth_simple, auth_sha1, auth_sha1_v2, auth_sha1_v4, auth_aes128_md5, auth_aes128_sha1, auth_chain_a~f — 全部 e2e 通过
+- **混淆 (5/6)**: plain, http_simple, http_post, http_mix, tls1.2_ticket_auth（tls1.2_ticket_fastauth 枚举有了待验证）
+- **UDP relay**: SOCKS5 UDP ASSOCIATE 全链路 e2e 通过（auth_chain_a / auth_aes128_sha1 / AEAD 三组，见 commit e40c827）
+- SOCKS5 客户端, TCP 中继, JSON 配置解析, 单元测试 186 个
 
-### 端到端测试矩阵（实测 16/37 通过，C 客户端 32/37）
+### 已完成阶段（记录，不再重做）
 
-- obfs: 5/5 通过 (plain, http_simple, http_post, http_mix, tls1.2_ticket_auth)
-- protocol: 2/4 通过 (auth_aes128_sha1, auth_aes128_md5); auth_sha1_v4 和 auth_chain_a 未通
-- cipher: 9/28 通过 (aes-128/192/256-cfb, aes-128/192/256-ctr, bf-cfb, salsa20, chacha20-ietf)
+- Phase 0 修复已知 Bug — 全部完成（commit 4138f7b 起）
+- Phase 1 hk.json 生产集成 — 完成（15 个 hk_integration 测试）
+- Phase 2 协议矩阵 — protocol 14/14、obfs 5/5、cipher 16/21 已实现项 e2e 通过；**加密方法矩阵的自动化回归脚本仍待 T3 入库**
+- Phase 4 AEAD — 本地 e2e 通过；hk 生产组合仍受服务端二进制阻塞（见阻塞项）
+- Phase 5/6/7 的旧版任务 — 被本版 T/Q/R/P/M 五阶段取代
 
 ### 未实现（枚举有了但代码空缺）
 
 | 加密方法 | 状态 | 备注 |
 |-----------|------|------|
-| camellia-128-cfb | 缺实现 | 需要 camellia crate 或手动实现 |
-| camellia-192-cfb | 缺实现 | 同上 |
-| camellia-256-cfb | 缺实现 | 同上 |
-| cast5-cfb | 缺实现 | 服务端本身也不支持（C 客户端同样失败） |
-| idea-cfb | 缺实现 | 同上 |
-| rc2-cfb | 缺实现 | 同上 |
-| seed-cfb | 缺实现 | 同上 |
-
-### 已知 Bug
-
-1. ~~auth_sha1_v4 roundtrip 失败~~ — 已修复 (commit 4138f7b)
-2. ~~auth_chain_a 端到端不通~~ — 已修复 (commit 68f89e4, 见 PROGRESS.md)
-3. AEAD 本地 e2e 已通过（aes-256-gcm + plain + origin → httpbin200）；
-   hk.json 生产服务器组合（AEAD + tls obfs）此前因服务端二进制 obfs 实现
-   与源码不一致而未互通——如需生产 AEAD 需重新验证
+| camellia-128/192/256-cfb | 缺实现 | 服务端支持，值得实现 |
+| cast5-cfb / idea-cfb / rc2-cfb / seed-cfb | 缺实现 | 服务端本身不支持（C 客户端同样失败），优先级低 |
 
 ### 阻塞项
 
-AEAD 端到端：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 实现与源码 `ssr-n/src/` 不一致。
-源码中 tls12_ticket_auth 生成标准 TLS ClientHello（0x16 03 01），但实际二进制在 AEAD 下产生非 TLS 格式数据（首字节 0x50）。
-**需要获取服务端对应的源码版本或反编译 obfs 部分才能继续。**
+AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 实现与源码 `ssr-n/src/` 不一致（源码生成标准 TLS ClientHello 0x16 03 01，实际二进制产生 0x50 开头数据）。需要服务端对应源码版本或反编译 obfs 才能继续。**此阻塞不拖累主线合入**——本地 AEAD e2e 已通过，hk 组合标记为"服务端侧不一致，待复核"。
+
+---
+
+## 主线准入门槛（Definition of Done）
+
+**以下 12 条全部满足，才允许 push 主线。任何一条不满足，在 PROGRESS.md 记录差距后继续对应 Phase。**
+
+| # | 门禁 | 命令 / 度量 | 目标 |
+|---|------|------------|------|
+| G1 | 编译零告警 | `cargo build --release 2>&1 \| grep -c '^warning'` | 0 |
+| G2 | clippy 零告警 | `cargo clippy --all-targets -- -D warnings` | exit 0 |
+| G3 | 格式统一 | `cargo fmt --all -- --check` | exit 0 |
+| G4 | 测试全绿 | `cargo test` | 0 failed，总数 ≥ 186 + T 阶段新增 |
+| G5 | 生产路径无 panic | 见 Q4 的 grep 脚本 | 生产路径 unwrap/expect/panic = 0 |
+| G6 | unsafe 审计 | `grep -rn 'unsafe ' src` | 0，或每处有 `// SAFETY:` 论证 |
+| G7 | 公共 API 文档 | `cargo doc --no-deps` + `#![warn(missing_docs)]` | 无 missing_docs 告警 |
+| G8 | e2e 矩阵 | `tools/matrix_test.sh` 输出 | 已实现组合全 PASS，结果表入库 |
+| G9 | 稳定性 | 10 分钟 soak + 异常注入 | 无内存泄漏、无 fd 泄漏、无 panic |
+| G10 | 空闲资源 | R1 脚本测量 | RSS ≤ 20MB、空闲 CPU 0%、fd 稳定 |
+| G11 | 性能对标 | criterion + 对标 C 客户端 | 本地回环吞吐 ≥ C 客户端 90% |
+| G12 | 发布资产 | README/CHANGELOG/LICENSE/CI/examples | 齐全且 CI 绿 |
 
 ---
 
 ## 工作阶段
 
-### Phase 0: 修复已知 Bug（最高优先级）
+> 阶段顺序即执行顺序：**T（测试）→ Q（代码质量）→ R（运行占用）→ P（性能）→ M（主线合入）**。
+> 理由：先有测试网兜底，再动代码质量（会改代码），改完测资源占用，资源干净后做性能，最后打包合入。
+> 已完成的 Phase 0-4 见"已完成阶段"，本文件不再重复其任务。
 
-**目标**: 让现有测试全部通过
+### Phase T: 测试补全与强化
 
-**任务**:
-
-- [x] 0.1 修复 auth_sha1_v4 roundtrip bug
-  - 文件: `src/protocol/auth_sha1_v4.rs`
-  - 现象: `client_post_decrypt` 产出截断数据
-  - 参考: `src/protocol/auth_sha1.rs` 和 `src/protocol/auth_sha1_v2.rs`（同族协议，roundtrip 通过）
-  - 对比 C 源码 `ssr-n/src/auth_aes128.c` 和 `ssr-n/src/auth_sha1_v4.c`
-  - 验证: `cargo test test_proto_auth_sha1_v4` 通过
-
-- [x] 0.2 运行完整测试套件确认无回归
-  - `cargo test` — 全部 0 failures
-  - `cargo test --test full_coverage` — 全部通过
-  - `cargo test --test hk_integration` — 全部通过
-  - 附加: auth_chain_a e2e 已打通（见 PROGRESS.md, commit 68f89e4）
-
-### Phase 1: 本地服务端集成测试（hk.json）
-
-**目标**: 用 `/opt/ssr/ssr-server` + `/opt/ssr/config.json` 验证客户端能连通
+**目标**: 测试资产全部入库、可一键回归、覆盖边界与异常，作为后续改代码的安全网。
 
 **任务**:
 
-- [ ] 1.1 确认服务端可用性
-  ```
-  file /opt/ssr/ssr-server
-  ss -tlnp | grep 2800
-  cat /opt/ssr/config.json
-  ```
-  - 如果 2800 端口已被占用，可能是之前的测试实例，先 kill
-  - 如果服务端配置的协议不是当前要测的，需要生成新配置
+- [ ] T1 测试资产入库（最高优先，/tmp 会被清理）
+  - 把 `/tmp/test_udp_e2e.py`、`/tmp/srv_*.json`、`/tmp/cli_*.json`、矩阵测试脚本移入仓库
+  - 目录约定: 脚本进 `tools/`，e2e 资产进 `tests/e2e/`（配置模板用占位符，端口/密码由脚本注入）
+  - 验证: 清空 /tmp 后 `tools/e2e_udp.sh` 仍能全绿
+  - 记录: PROGRESS.md 写明入库文件清单
 
-- [ ] 1.2 启动本地 SSR 服务端（用 hk.json 的配置）
-  ```bash
-  # 先杀掉可能残留的旧进程
-  pkill -f "ssr-server" 2>/dev/null; sleep 0.5
-  /opt/ssr/ssr-server -c /opt/ssr/config.json &
-  ss -tlnp | grep 2800
-  ```
+- [ ] T2 边界与负面测试（协议/配置/解析层）
+  - 空输入、1 字节输入、超长输入（>65507 UDP、>65535 段）
+  - 截断的地址头 / HMAC 长度不足 / base64 非法字符 / JSON 缺字段、字段类型错误
+  - 端口 0 与 65535、domain 名 255 字节上限、FRAG != 0 丢弃、mDNS 5353 丢弃
+  - 每类至少 2 个用例；**要求：不 panic，返回错误或按 C 行为丢包**
+  - 落点: `tests/full_coverage.rs` 追加 `mod edge_cases`
 
-- [ ] 1.3 用 hk.json 配置启动客户端
-  ```bash
-  cargo run --release --bin ssr_client -- -c hk.json &
-  ss -tlnp | grep 1080
-  ```
+- [ ] T3 属性/随机测试（roundtrip 不变量）
+  - dev-dependency 加 `proptest`（纯 Rust，loong64 可编译）
+  - 不变量: 任意字节 `decrypt(encrypt(x)) == x`（28 cipher 全枚举）；任意输入协议层不 panic
+  - 落点: `tests/proptest_roundtrip.rs`
+  - 若 proptest 在 loong64 编译受阻，降级方案: 自写伪随机循环 1000 轮（固定种子，可复现）
 
-- [ ] 1.4 通过 SOCKS5 代理访问外部
-  ```bash
-  curl -x socks5://127.0.0.1:1080 http://httpbin.org/ip
-  ```
-  - 验证: 返回 JSON（公网 IP）
+- [ ] T4 e2e 矩阵自动化脚本
+  - `tools/matrix_test.sh`：生成配置 → 起 ssr-server → 起客户端 → curl 验证 → 清理 → 输出 PASS/FAIL 表
+  - 组合策略（全叉 21×14×6 过大，采用三轴各自全覆盖 + 关键交叉）:
+    1. cipher 轴: 16 已实现流加密 + 5 AEAD，各配 origin+plain = 21 组
+    2. protocol 轴: 14 协议，各配 aes-256-cfb+plain = 14 组
+    3. obfs 轴: 6 混淆，各配 aes-256-cfb+auth_aes128_sha1 = 6 组
+    4. UDP 轴: 3 组（已有脚本，参数化并入库）
+  - 结果表写入 `tests/e2e/RESULTS.md`，含日期与服务端版本
+  - 已知服务端不支持的组合（cast5/idea/rc2/seed、auth_chain_f+key_len>16 SIGBUS）标记 SKIP 并注明原因
 
-- [ ] 1.5 记录结果到 PROGRESS.md
+- [ ] T5 异常与恢复测试
+  - 服务端 `kill -9` → 客户端不 panic、连接关闭干净、恢复后可重连
+  - 客户端空闲超时（idle_timeout）到期回收
+  - 并发: 100 个并发 TCP 连接同时传输，全部成功
+  - 半关闭: 客户端侧先 close 写端，服务端侧正常收尾
+  - 落点: `tests/resilience.rs`（`#[ignore]` 标注长耗时，CI 用 `-- --ignored` 跑）
 
-### Phase 2: 全协议矩阵端到端测试
+- [ ] T6 长稳 soak 测试
+  - 10 分钟持续传输（httpbin bytes 循环 + UDP echo 循环）
+  - 每 30 秒采样 RSS / fd / 线程数，断言: RSS 增长 ≤ 10MB（warmup 后）、fd 回到基线、无 panic
+  - 落点: `tools/soak_test.sh` + `tools/resource_probe.sh`（R1 复用同一脚本）
 
-**目标**: 本机服务端 + 客户端，逐一测试所有加密方法、协议、混淆的组合
+- [ ] T7 回归确认
+  - `cargo test` 全绿；`tools/e2e_*.sh` 全绿
+  - PROGRESS.md 记录: 新增测试数（186 → N）、矩阵结果表位置
 
-**测试矩阵**:
+### Phase Q: 代码质量（push 主线的核心）
 
-#### 2.1 加密方法矩阵
-
-为每个加密方法生成一份配置文件，启动服务端，然后用客户端连接测试。
-
-| 加密方法 | 需要服务端配置 | 测试方法 |
-|-----------|---------------|----------|
-| none | method: "none" | 客户端连通+数据传输 |
-| table | method: "table" | 同上 |
-| rc4 | method: "rc4" | 同上 |
-| rc4-md5-6 | method: "rc4-md5-6" | 同上 |
-| rc4-md5 | method: "rc4-md5" | 同上 |
-| aes-128-cfb | method: "aes-128-cfb" | 同上 |
-| aes-192-cfb | method: "aes-192-cfb" | 同上 |
-| aes-256-cfb | method: "aes-256-cfb" | 同上 |
-| aes-128-ctr | method: "aes-128-ctr" | 同上 |
-| aes-192-ctr | method: "aes-192-ctr" | 同上 |
-| aes-256-ctr | method: "aes-256-ctr" | 同上 |
-| bf-cfb | method: "bf-cfb" | 同上 |
-| des-cfb | method: "des-cfb" | 同上 |
-| salsa20 | method: "salsa20" | 同上 |
-| chacha20 | method: "chacha20" | 同上 |
-| chacha20-ietf | method: "chacha20-ietf" | 同上 |
-| aes-128-gcm | method: "aes-128-gcm" | 同上 (AEAD) |
-| aes-192-gcm | method: "aes-192-gcm" | 同上 (AEAD) |
-| aes-256-gcm | method: "aes-256-gcm" | 同上 (AEAD) |
-| chacha20-ietf-poly1305 | method: "chacha20-ietf-poly1305" | 同上 (AEAD) |
-| xchacha20-ietf-poly1305 | method: "xchacha20-ietf-poly1305" | 同上 (AEAD) |
-| camellia-128-cfb | 需先实现 | 先实现再测试 |
-| camellia-192-cfb | 需先实现 | 先实现再测试 |
-| camellia-256-cfb | 需先实现 | 先实现再测试 |
-| cast5-cfb | 需先实现 | 先实现再测试 |
-| idea-cfb | 需先实现 | 先实现再测试 |
-| rc2-cfb | 需先实现 | 先实现再测试 |
-| seed-cfb | 需先实现 | 先实现再测试 |
-
-#### 2.2 协议矩阵
-
-在每个加密方法下测试协议（使用已实现的加密方法）：
-
-| 协议 | 测试要点 |
-|------|---------|
-| origin | 纯加密，无协议帧 |
-| verify_simple | HMAC 验证帧 |
-| auth_simple | 简单认证帧 |
-| auth_sha1 | SHA1 HMAC 认证 |
-| auth_sha1_v2 | SHA1 HMAC v2 |
-| auth_sha1_v4 | SHA1 HMAC v4 |
-| auth_aes128_md5 | AES128 + MD5 认证 |
-| auth_aes128_sha1 | AES128 + SHA1 认证 |
-| auth_chain_a | 链式协议 a |
-| auth_chain_b | 链式协议 b |
-| auth_chain_c | 链式协议 c |
-| auth_chain_d | 链式协议 d |
-| auth_chain_e | 链式协议 e |
-| auth_chain_f | 链式协议 f |
-
-**测试方法**: 生成配置文件 → 启动服务端 → 客户端连接 → curl 通过代理 → 记录结果
-
-#### 2.3 混淆矩阵
-
-在每个协议+加密组合下测试混淆：
-
-| 混淆 | 测试要点 |
-|------|---------|
-| plain | 无混淆 |
-| http_simple | HTTP GET 伪装 |
-| http_post | HTTP POST 伪装 |
-| http_mix | 随机 GET/POST |
-| tls1.2_ticket_auth | TLS ticket 认证（需握手） |
-| tls1.2_ticket_fastauth | TLS ticket 快速认证 |
-
-#### 2.4 实际执行方式
-
-每个测试组合的执行流程：
-
-```bash
-# 1. 生成服务端配置
-cat > /tmp/ssr_test_server.json << EOF
-{
-    "password": "test_password",
-    "method": "<METHOD>",
-    "protocol": "<PROTOCOL>",
-    "protocol_param": "<PROTO_PARAM>",
-    "obfs": "<OBS>",
-    "obfs_param": "<OBFS_PARAM>",
-    "udp": false,
-    "idle_timeout": 30,
-    "connect_timeout": 6,
-    "udp_timeout": 6,
-    "server_settings": {
-        "listen_address": "127.0.0.1",
-        "listen_port": 18388
-    }
-}
-EOF
-
-# 2. 生成客户端配置
-cat > /tmp/ssr_test_client.json << EOF
-{
-    "password": "test_password",
-    "method": "<METHOD>",
-    "protocol": "<PROTOCOL>",
-    "protocol_param": "<PROTO_PARAM>",
-    "obfs": "<OBS>",
-    "obfs_param": "<OBFS_PARAM>",
-    "udp": false,
-    "client_settings": {
-        "server": "127.0.0.1",
-        "server_port": 18388,
-        "listen_address": "127.0.0.1",
-        "listen_port": 18180
-    }
-}
-EOF
-
-# 3. 启动服务端
-/opt/ssr/ssr-server -c /tmp/ssr_test_server.json &
-SERVER_PID=$!
-sleep 1
-
-# 4. 启动客户端
-cargo run --bin ssr_client -- -c /tmp/ssr_test_client.json &
-CLIENT_PID=$!
-sleep 1
-
-# 5. 测试连通
-RESULT=$(curl -x socks5://127.0.0.1:18180 --connect-timeout 5 http://httpbin.org/ip 2>/dev/null)
-if echo "$RESULT" | grep -q "origin"; then
-    echo "PASS: <METHOD>+<PROTOCOL>+<OBS>"
-else
-    echo "FAIL: <METHOD>+<PROTOCOL>+<OBS>"
-fi
-
-# 6. 清理
-kill $CLIENT_PID $SERVER_PID 2>/dev/null
-wait $CLIENT_PID $SERVER_PID 2>/dev/null
-```
-
-**注意**: 可能有些加密方法 ssr-n 服务端不支持（比如 camellia 如果服务端没编译进去）。对服务端不支持的方法，标记为 "服务端不支持，跳过"。
-
-### Phase 3: 补全缺失的加密方法
-
-> **优先级说明**: 7 个缺失加密方法中，camellia-128/192/256-cfb 值得实现（服务端支持），
-> 而 cast5-cfb, idea-cfb, rc2-cfb, seed-cfb **服务端本身不支持**（C 客户端也失败），
-> 实现这些的优先级低。优先做 camellia。
-
-**目标**: 实现缺失的流加密方法，优先 camellia
+**目标**: 编译/clippy/fmt 零告警，生产路径零 panic，unsafe 清零，公共 API 有文档，依赖干净。
 
 **任务**:
 
-- [ ] 3.1 实现 Camellia-CFB (128/192/256)
-  - 查找 Rust camellia crate: `cargo search camellia`
-  - 如果没有合适 crate，手动实现 Camellia 块密码 + cfb-mode
-  - 修改文件: `src/crypto/stream.rs`, `src/crypto/cipher_env.rs`
-  - 添加到 `stream_encrypt` / `stream_decrypt` / `make_encrypt_ctx` / `make_decrypt_ctx`
+- [ ] Q1 消除 35 个编译告警（逐类处理，不动行为）
+  - 11 处 `cipher::Array::from_slice` 弃用 → 按提示改 `TryFrom`（注意失败分支返回错误，不 unwrap）
+  - 3 处 `clone_from_slice` 同上
+  - 4 处 unnecessary mut、8 处 unused import/variable/function、5 处 never read 字段/静态
+  - 每改一类跑 `cargo test`，行为不得变化（字节级一致，可用现有协议测试兜底）
+  - 完成标准: `cargo build 2>&1 | grep -c '^warning'` = 0
 
-- [ ] 3.2 实现 CAST5-CFB
-  - 查找 Rust cast5 crate
-  - 同上模式
+- [ ] Q2 clippy 基线并清零
+  - 先跑 `cargo clippy --all-targets 2>&1 | tail -20` 记录基线数量到 PROGRESS.md
+  - 逐条修复（优先 correctness → perf → style）；确属误报用 `#[allow]` + 一行注释说明理由
+  - 完成标准: `cargo clippy --all-targets -- -D warnings` exit 0
+  - 在 Cargo.toml 加 `[lints.rust] warnings = ...`（若 MSRV ≥1.74）固化规则
 
-- [ ] 3.3 实现 IDEA-CFB
-  - 需要手动实现 IDEA 块密码
-  - 或找到 `idea` crate
+- [ ] Q3 rustfmt 统一
+  - `cargo fmt --all`，diff 里只允许纯格式变化
+  - 完成标准: `cargo fmt --all -- --check` exit 0；fmt 后立即 `cargo test` 全绿
 
-- [ ] 3.4 实现 RC2-CFB
-  - 需要手动实现 RC2 块密码
+- [ ] Q4 生产路径 panic 清零
+  - 写 `tools/check_panic_paths.sh`: grep src 下 `unwrap()/expect()/panic!/unreachable!`，排除 `#[cfg(test)]` 块与 `src/bin/`（bin 允许 fail-fast）
+  - 分拣当前 138 处 → 生产路径逐处改造: 网络数据路径返回 `SsrError`；逻辑上不可达的用 `unreachable!` 换成带信息的 `SsrError::Internal` 或 `debug_assert` + 保守分支
+  - 例外白名单写进脚本顶部（每条附一行理由），白名单条目数只减不增
+  - 完成标准: 脚本 exit 0；`cargo test` 全绿
 
-- [ ] 3.5 实现 Seed-CFB
-  - 需要手动实现 SEED 块密码
-  - 或找到 `seed` crate
+- [ ] Q5 unsafe 审计（当前 5 处）
+  - 逐处判断: 能删则删（多半可用 safe 等价改写）；必须保留的，原地写 `// SAFETY:` 段落说明不变量与为何成立
+  - 完成标准: `grep -rn 'unsafe ' src` = 0，或条目数 = SAFETY 注释数且经人工复核
 
-- [ ] 3.6 每个实现完成后写单元测试
-  - Roundtrip 测试: encrypt → decrypt = identity
-  - 大数据测试: 16KB 数据 roundtrip
-  - 添加到 `tests/full_coverage.rs`
+- [ ] Q6 发布构建配置
+  - Cargo.toml 增加（库被下游使用时 profile 仅在顶层生效，属无害最佳实践）:
+    ```toml
+    [profile.release]
+    opt-level = 3
+    lto = "thin"
+    codegen-units = 1
+    strip = "symbols"
+    ```
+  - 记录前后 `ls -lh target/release/ssr_client` 数值到 PROGRESS.md
+  - 注意: `panic = "abort"` 不设（库 crate 交给下游决定）
 
-- [ ] 3.7 运行 Phase 2 的矩阵测试验证
+- [ ] Q7 公共 API 文档与示例
+  - `src/lib.rs` 加 `#![warn(missing_docs)]`，补全所有 pub 项的 doc comment
+  - 文档注释必须写清: 语义、错误条件、与 C 的对应关系（协议层标注 C 函数名与文件行号）
+  - 新增 `examples/socks5.rs`: 20 行内起一个可用的 SOCKS5 代理
+  - 完成标准: `cargo doc --no-deps` 零告警；example 可 `cargo run --example socks5` 跑通
 
-### Phase 4: AEAD 端到端互通
+- [ ] Q8 错误处理审计
+  - 全库搜索 `let _ =`、`ok()`、`.unwrap_or_default()` 处理网络错误的地方，确认无静默吞错
+  - 所有 io::Error 传播带上下文（thiserror source 链完整）
+  - 对外 API 不返回裸 `Box<dyn Error>`；确认 `SsrError` 变体覆盖全部路径
 
-> **阻塞警告**: 当前被阻塞 — 服务端二进制的 obfs 实现与源码不一致。
-> 此阶段在获取正确源码版本或反编译 obfs 部分之前无法推进。
-> 如果此阻塞无法解除，此阶段可跳过，将 AEAD 标记为"模块完成但端到端未验证"。
+- [ ] Q9 依赖审计
+  - 移除未使用依赖（对照 grep 逐个确认: 检查 `hkdf`、`crc32fast`、`bytes`、`tokio-test` 等是否真被用到）
+  - `tokio = "full"` 收窄为实际用的 features（net/rt-multi-thread/macros/io-util/time/sync/signal）
+  - 加 `rust-version`（实际测得 MSRV 后填）；`cargo update` 后跑全测
+  - 有网时跑 `cargo audit`（走 proxychains4）；结果记录 PROGRESS.md
 
-**目标**: AEAD 加密模式（aes-128-gcm, aes-256-gcm 等）能真正连通服务端
+- [ ] Q10 Cargo.toml 发布元数据
+  - 补 `description` / `license`（与 LICENSE 文件一致）/ `repository` / `keywords` / `categories` / `readme`
+  - 版本策略: 主线首发 `0.1.0`，写进 CHANGELOG 的兼容性承诺（semver，0.x 允许 breaking）
 
-**任务**:
+### Phase R: 运行占用
 
-- [ ] 4.1 对比客户端 AEAD 实现与 C 服务端的 wire format
-  - 关键差异点: salt 传输、nonce 递增、chunk 分割
-  - 参考: `ssr-n/src/aead.c`
-
-- [ ] 4.2 检查 AEAD downgrade 逻辑
-  - `local/mod.rs` 中 AEAD 模式强制使用 plain obfs + origin protocol
-  - 确认服务端是否也这样处理
-
-- [ ] 4.3 修复 AEAD 连通性
-  - 逐字节对比客户端和服务端的加密输出
-  - 用 `SSR_DEBUG=1` 抓 handshake 数据
-
-- [ ] 4.4 AEAD 矩阵测试
-  - aes-128-gcm + origin + plain
-  - aes-256-gcm + origin + plain
-  - chacha20-ietf-poly1305 + origin + plain
-  - xchacha20-ietf-poly1305 + origin + plain
-
-### Phase 5: 性能优化
-
-**目标**: 达到可发布的性能水平
-
-**任务**:
-
-- [ ] 5.1 基准测试
-  - 用 `criterion` crate 写 benchmark
-  - 测试每种加密方法的 throughput (MB/s)
-  - 测试协议层 pre_encrypt/post_decrypt 的 overhead
-  - 测试 obfs encode/decode 的 overhead
-
-- [ ] 5.2 热路径优化
-  - `cipher_env.rs` 中的 encrypt/decrypt 是热路径
-  - 检查是否有不必要的内存分配 (clone, to_vec)
-  - 考虑使用 `bytes::BytesMut` 避免拷贝
-  - 检查 `Vec<u8>` 分配是否可以用预分配或 buffer pool
-
-- [ ] 5.3 连接池与复用
-  - 评估是否需要连接复用
-  - 如果需要，设计连接池
-
-- [ ] 5.4 编译优化
-  - 确认 release profile 配置合理
-  - LTO, opt-level=3, codegen-units=1 等
-
-### Phase 6: 遗漏检查与代码质量
-
-**目标**: 代码达到可发布的质量水平
+**目标**: 空闲与负载下的内存、线程、fd、CPU、体积全部量化达标，无泄漏。
 
 **任务**:
 
-- [ ] 6.1 审查所有 error handling
-  - 检查所有 `unwrap()` 和 `expect()` 是否合理
-  - 确保错误传播链完整，不留 panic
+- [ ] R1 基线测量脚本（先测后改，数字进 PROGRESS.md）
+  - `tools/resource_probe.sh`: 启动 hk.json 客户端，采样 `/proc/<pid>/{status,fd}` + `ps -o nlwp`
+  - 记录: 空闲 RSS、线程数、fd 数、`top -b -n2` 空闲 CPU
+  - 目标: **空闲 RSS ≤ 20MB、线程数 ≤ CPU核数+4、空闲 CPU = 0%、fd = 基线（3 TCP/UDP 相关 + stdio）**
 
-- [ ] 6.2 审查边界条件
-  - 空数据处理
-  - 超大数据处理
-  - 网络断开/超时处理
-  - 端口范围 (0-65535)
+- [ ] R2 fd 泄漏测试
+  - 循环 500 次: 建 TCP 连接经代理传输后关闭；结束后 fd 数回到基线
+  - UDP: 建 100 个会话，等 `udp_timeout` 过期后会话表清空、fd 回落（验证 udp_relay 淘汰逻辑）
+  - 纳入 T5/T6 断言
 
-- [ ] 6.3 审查协议层逻辑
-  - 对比每个协议的 `client_pre_encrypt` / `client_post_decrypt` 与 C 源码
-  - 特别关注 auth_chain_a~f 的差异
-  - 检查 HMAC key 构建是否正确
+- [ ] R3 负载内存增长
+  - 10 分钟持续 64KB 分块传输，每 30s 采样 RSS；warmup 后线性增长斜率 ≈ 0（总增长 ≤ 10MB）
+  - 若增长: 用 `heaptrack`（若可用）或二分法定位（优先怀疑: 会话表、buffer 累积、日志缓冲）
 
-- [ ] 6.4 审查混淆层逻辑
-  - 对比每个 obfs 的 encode/decode 与 C 源码
-  - 特别关注 tls1.2_ticket_auth 的 ClientHello 构建
+- [ ] R4 热路径分配审计（与 P3 协同，这里只管"少分配"）
+  - `grep -rn 'to_vec()\|\.clone()' src/crypto src/relay src/protocol` 逐处判断是否可避免
+  - 读写 buffer 复用: 评估 `BytesMut` 预分配（依赖已有 `bytes`）；per-connection buffer 不要每包新建大 Vec
+  - 验收: R3 达标 + 分配次数对比数据（如用 criterion 的 `iter_batched` 或计数插桩）
 
-- [ ] 6.5 添加文档注释
-  - 所有 pub 函数/类型需要 doc comment
-  - 复杂逻辑需要内联注释说明算法
+- [ ] R5 二进制体积
+  - 基线记录 → 应用 Q6 profile（strip/lto）→ 目标: 相对基线缩减 ≥ 30%，绝对值 < 5MB
+  - 记录 `size target/release/ssr_client` 的 text/data/bss
 
-- [ ] 6.6 检查 Cargo.toml
-  - 移除未使用的依赖
-  - 确认版本号合理
-  - 添加 description, license, repository 等 metadata
+- [ ] R6 资源回收完整性
+  - `SsrClient::stop()` 后: 所有任务退出、socket 释放、进程可干净退出（无残留线程）
+  - 连接中断/超时路径同样释放（用 T5 用例覆盖）
+  - 完成标准: T5/T6 全绿 + R1 目标达成
 
-### Phase 7: 最终验证
+### Phase P: 性能
 
-**目标**: 确认所有功能正确，性能达标，可发布
+**目标**: 建立可复现基准，性能不低于 C 客户端 90%，热路径无明显浪费。
 
 **任务**:
 
-- [ ] 7.1 完整测试矩阵通过
-  - 所有加密方法 × 所有协议 × 所有混淆的组合
-  - 记录每个组合的通过/失败状态
+- [ ] P1 criterion 基准建立
+  - dev-dependency 加 `criterion`（loong64 编译验证，受阻则降级为自写计时 bin）
+  - `benches/cipher_throughput.rs`: 每种 cipher 的 encrypt/decrypt MB/s（1MB buffer）
+  - `benches/protocol_overhead.rs`: 各协议 pre_encrypt/post_decrypt 每包 ns 开销
+  - `benches/obfs_overhead.rs`: 各 obfs encode/decode 每包 ns 开销
+  - 结果表入库 `BENCH.md`（含日期、机器、频率），作为后续回归对照
 
-- [ ] 7.2 长时间运行测试
-  - 客户端连接后持续传输 10 分钟
-  - 检查内存泄漏 (RSS 持续增长?)
-  - 检查连接稳定性
+- [ ] P2 对标 C 客户端
+  - 同机同配置: 我方客户端 vs `/opt/ssr/ssr-client`，本地 ssr-server 回环传 64MB 文件
+  - 度量吞吐 MB/s 与 CPU 占用；目标 **吞吐 ≥ C 的 90%，CPU 不高于 C 的 1.5 倍**
+  - 脚本: `tools/bench_vs_c.sh`，结果进 BENCH.md
 
-- [ ] 7.3 异常场景测试
-  - 服务端 kill -9 后客户端的行为
-  - 客户端 kill -9 后服务端的行为
-  - 网络中断后的重连
-  - 并发连接测试
+- [ ] P3 热路径优化（有基线后按数据动手，禁止盲改）
+  - 优先级: cipher_env encrypt/decrypt 每包分配 → 协议层 hmac/PRNG 每包分配 → obfs 拼包拷贝
+  - 每项优化必须: bench 前后对比 + `cargo test` 全绿，收益 < 5% 的不做
+  - 明确**不做**的: SIMD 手写汇编、unsafe 加速（与 Q5 冲突）、改变 wire format 的任何优化
 
-- [ ] 7.4 README 编写
-  - 项目简介
-  - 快速开始
-  - API 文档
-  - 配置说明
-  - 已测试的组合列表
+- [ ] P4 并发扩展性
+  - 1/8/64/100 并发流吞吐曲线；无锁竞争热点（Mutex 争用）才优化
+  - 目标: 并发 64 时总吞吐 ≥ 单流的 8 倍（回环、有 12 核的前提）
+
+- [ ] P5 发布编译核对
+  - `cargo build --release` 后复测 P1；确认 release 无 debug_assert 拖累
+  - 文档注明: 下游可用 `RUSTFLAGS="-C target-cpu=native"` 自行榨取，库本身不绑 CPU 特性
+
+### Phase M: 主线合入
+
+**目标**: 门禁 G1-G12 全绿，合入资产齐全。
+
+**任务**:
+
+- [ ] M1 CI 工作流
+  - `.github/workflows/ci.yml`: fmt check → clippy -D warnings → cargo test → release build →（可选）e2e（需服务端，标记 `workflow_dispatch` 或 self-hosted）
+  - 本地先逐条跑同样命令，保证 CI 不会红
+
+- [ ] M2 README 更新
+  - 现状核对: 快速开始、API 示例（指向 examples/）、支持矩阵（cipher/protocol/obfs/UDP）、配置字段说明、MSRV、徽章
+  - 已测试组合表链到 `tests/e2e/RESULTS.md`
+
+- [ ] M3 CHANGELOG + LICENSE
+  - `CHANGELOG.md`: 0.1.0 首发条目（功能范围、已知限制: cast5/idea/rc2/seed 未实现、AEAD hk 组合待复核）
+  - `LICENSE` 文件与 Cargo.toml `license` 字段一致
+
+- [ ] M4 API 冻结复核
+  - `cargo public-api`（或人工过一遍 `pub` 清单）确认无私有类型泄漏、无无意义 pub
+  - 内部类型（relay/obfs 细节）尽量 `pub(crate)`；确认 `Box<dyn Protocol>` 等 trait 边界合理
+
+- [ ] M5 最终验收
+  - 按"主线准入门槛"表逐行跑命令、贴输出到 PROGRESS.md
+  - 12 条门禁全绿 → 更新本文件状态快照 → commit → 按用户指示 push（**不主动 push**）
 
 ---
 
@@ -471,27 +349,39 @@ wait $CLIENT_PID $SERVER_PID 2>/dev/null
 **修复**: (如果 FAIL，做了什么修复)
 ```
 
+资源/性能类记录追加机器信息与原始数字：
+
+```
+**环境**: 3A5000 x12 @ 2.0GHz / Deepin 25 / kernel 6.6.143
+**原始数据**: RSS idle=xxMB, threads=N, fd=N, 二进制=xxKB, 吞吐=xx MB/s
+**对照**: 改前 xx → 改后 xx (±x%)
+```
+
 ---
 
 ## 参考资源
 
-- C 参考实现: `ssr-n/src/` 目录
+- C 参考实现: `ssr-n/src/` 目录（协议层注释须标注 C 函数名与行号）
 - SSR 协议规范: 各协议的 C 实现是最权威的参考
 - ssr-n 配置格式: `hk.json` 和 `/opt/ssr/config.json`
 - 服务端帮助: `/opt/ssr/ssr-server -h`
+- 已知 C 服务端 bug: auth_chain_f + key_len>16 启动 SIGBUS（我方取 min(16) 规避）
 
 ---
 
 ## 停止条件
 
-当以下所有条件满足时，项目可视为完成：
+当"主线准入门槛"12 条全部满足时，本项目对当前目标（push 主线）视为完成：
 
-1. `cargo test` 全部通过（0 failures）
-2. 所有 28 种加密方法的 roundtrip 测试通过
-3. 所有 14 种协议的 roundtrip 测试通过
-4. 所有 6 种混淆的 roundtrip 测试通过
-5. 至少 hk.json 配置的端到端测试通过
-6. AEAD 端到端测试通过
-7. `cargo clippy` 无 warning
-8. README 完成
-9. benchmark 基准已建立
+1. `cargo build --release` 零告警
+2. `cargo clippy --all-targets -- -D warnings` 零告警
+3. `cargo fmt --all -- --check` 零差异
+4. `cargo test` 全绿（0 failed，含 T2/T3 新增用例）
+5. 生产路径 unwrap/expect/panic = 0（白名单豁免已书面记录）
+6. unsafe = 0 或逐条 SAFETY 论证
+7. `cargo doc --no-deps` 零 missing_docs
+8. e2e 矩阵脚本全绿且资产入库（不依赖 /tmp）
+9. 10 分钟 soak: 无内存/fd 泄漏、无 panic
+10. 空闲 RSS ≤ 20MB、空闲 CPU 0%、二进制 < 5MB
+11. 回环吞吐 ≥ C 客户端 90%（BENCH.md 有数据）
+12. README / CHANGELOG / LICENSE / CI / examples 齐全
