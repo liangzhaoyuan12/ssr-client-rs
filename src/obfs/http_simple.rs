@@ -1,5 +1,5 @@
-use crate::error::SsrResult;
 use super::Obfs;
+use crate::error::SsrResult;
 use rand::Rng;
 
 /// Random User-Agent strings (from C source)
@@ -50,7 +50,9 @@ fn fake_request_path(encoded_data: &str) -> String {
 /// Generate a random boundary string for multipart form data
 fn random_boundary() -> String {
     let mut rng = rand::thread_rng();
-    let chars: Vec<char> = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".chars().collect();
+    let chars: Vec<char> = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+        .chars()
+        .collect();
     (0..32)
         .map(|_| chars[rng.gen_range(0..chars.len())])
         .collect()
@@ -141,7 +143,6 @@ impl Obfs for HttpSimpleObfs {
         Ok(result)
     }
 
-
     fn client_decode(&mut self, buf: &[u8]) -> SsrResult<(Vec<u8>, bool)> {
         if self.has_recv_header {
             return Ok((buf.to_vec(), false));
@@ -218,7 +219,6 @@ impl Obfs for HttpPostObfs {
         Ok(result)
     }
 
-
     fn client_decode(&mut self, buf: &[u8]) -> SsrResult<(Vec<u8>, bool)> {
         self.inner.client_decode(buf)
     }
@@ -264,7 +264,6 @@ impl Obfs for HttpMixObfs {
             self.http_simple.client_encode(buf)
         }
     }
-
 
     fn client_decode(&mut self, buf: &[u8]) -> SsrResult<(Vec<u8>, bool)> {
         // Both simple and post use same decode logic
@@ -392,11 +391,8 @@ mod tests {
 
     #[test]
     fn test_http_simple_with_extra_param() {
-        let mut obfs = HttpSimpleObfs::new(
-            "default.com".to_string(),
-            443,
-            "custom.com".to_string(),
-        );
+        let mut obfs =
+            HttpSimpleObfs::new("default.com".to_string(), 443, "custom.com".to_string());
         let data = b"test";
         let encoded = obfs.client_encode(data).unwrap();
         let header_str = String::from_utf8_lossy(&encoded);

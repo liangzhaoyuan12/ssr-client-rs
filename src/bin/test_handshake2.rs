@@ -7,24 +7,25 @@ use std::time::Duration;
 fn main() {
     for attempt in 1..=3 {
         println!("=== Attempt {} ===", attempt);
-        
-        let mut obfs = Tls12TicketAuthObfs::new(
-            "192.0.2.1".into(), 2800, String::new(), false,
-        );
+
+        let mut obfs =
+            Tls12TicketAuthObfs::new("192.0.2.1".into(), 2800, String::new(), false);
         obfs.set_key(vec![0x42u8; 16]);
 
         match TcpStream::connect("192.0.2.1:2800") {
             Ok(mut stream) => {
-                stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-                
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+
                 let client_hello = obfs.client_encode(b"").unwrap();
                 println!("ClientHello: {} bytes", client_hello.len());
-                
+
                 if let Err(e) = stream.write_all(&client_hello) {
                     println!("Send error: {}", e);
                     continue;
                 }
-                
+
                 let mut buf = [0u8; 4096];
                 match stream.read(&mut buf) {
                     Ok(n) => {
@@ -42,7 +43,7 @@ fn main() {
             }
             Err(e) => println!("Connect error: {}", e),
         }
-        
+
         std::thread::sleep(Duration::from_secs(1));
     }
 }

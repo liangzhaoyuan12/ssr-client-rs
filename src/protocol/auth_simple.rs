@@ -1,6 +1,6 @@
+use super::{get_s5_head_size, memintcopy_lt, GlobalData, Protocol, XorShift128Plus};
 use crate::error::SsrResult;
-use crate::utils::crc32::{fill_crc32, check_crc32};
-use super::{Protocol, GlobalData, get_s5_head_size, memintcopy_lt, XorShift128Plus};
+use crate::utils::crc32::{check_crc32, fill_crc32};
 
 const PACK_UNIT_SIZE: usize = 2000;
 
@@ -72,14 +72,17 @@ impl AuthSimple {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as u32;
-        memintcopy_lt(&mut out[data_offset..data_offset+4], now);
+        memintcopy_lt(&mut out[data_offset..data_offset + 4], now);
 
         // Client ID (4 bytes)
         self.global.increment();
         out[data_offset + 4..data_offset + 8].copy_from_slice(&self.global.local_client_id[..4]);
 
         // Connection ID (4 bytes, little-endian)
-        memintcopy_lt(&mut out[data_offset + 8..data_offset+12], self.global.connection_id);
+        memintcopy_lt(
+            &mut out[data_offset + 8..data_offset + 12],
+            self.global.connection_id,
+        );
 
         // Payload
         let payload_offset = data_offset + 12;
@@ -92,8 +95,12 @@ impl AuthSimple {
 
 impl Protocol for AuthSimple {
     fn set_salt(&mut self, _salt: &str) {}
-    fn get_overhead(&self) -> usize { 0 }
-    fn need_feedback(&self) -> bool { false }
+    fn get_overhead(&self) -> usize {
+        0
+    }
+    fn need_feedback(&self) -> bool {
+        false
+    }
 
     fn client_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
         let mut result = Vec::new();
@@ -134,7 +141,9 @@ impl Protocol for AuthSimple {
 
             if !(7..8192).contains(&length) {
                 self.recv_buffer.clear();
-                return Err(crate::error::SsrError::Protocol("auth_simple: invalid length".into()));
+                return Err(crate::error::SsrError::Protocol(
+                    "auth_simple: invalid length".into(),
+                ));
             }
 
             if length > self.recv_buffer.len() {
@@ -144,12 +153,14 @@ impl Protocol for AuthSimple {
             // Check CRC32
             if !check_crc32(&self.recv_buffer[..length]) {
                 self.recv_buffer.clear();
-                return Err(crate::error::SsrError::Protocol("auth_simple: CRC32 mismatch".into()));
+                return Err(crate::error::SsrError::Protocol(
+                    "auth_simple: CRC32 mismatch".into(),
+                ));
             }
 
             let rand_len = self.recv_buffer[2] as usize;
             let data_size = length.saturating_sub(rand_len + 6);
-            let data_start = 2 + rand_len;  // 2(len) + 1(rand_len_field) + rand_len(random_data)
+            let data_start = 2 + rand_len; // 2(len) + 1(rand_len_field) + rand_len(random_data)
 
             let mut payload = self.recv_buffer[data_start..data_start + data_size].to_vec();
 

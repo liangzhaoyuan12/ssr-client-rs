@@ -31,7 +31,10 @@ impl TableCipher {
             dec_table[enc_table[i] as usize] = i as u8;
         }
 
-        Self { enc_table, dec_table }
+        Self {
+            enc_table,
+            dec_table,
+        }
     }
 
     pub fn encrypt(&self, data: &[u8]) -> Vec<u8> {

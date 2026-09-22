@@ -1,8 +1,8 @@
+use super::{get_s5_head_size, memintcopy_lt, GlobalData, Protocol, ServerInfo, XorShift128Plus};
 use crate::error::SsrResult;
 use crate::utils::adler32::fill_adler32;
 use crate::utils::crc32::fill_crc32_to;
 use crate::utils::hash::hmac_sha1;
-use super::{Protocol, GlobalData, ServerInfo, get_s5_head_size, memintcopy_lt, XorShift128Plus};
 
 const PACK_UNIT_SIZE: usize = 2000;
 const HMAC_SHA1_LEN: usize = 10;
@@ -64,9 +64,12 @@ impl AuthSHA1 {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as u32;
-        memintcopy_lt(&mut out[7+rand_len..7+rand_len+4], now);
-        out[7+rand_len+4..7+rand_len+8].copy_from_slice(&self.global.local_client_id[..4]);
-        memintcopy_lt(&mut out[7+rand_len+8..7+rand_len+12], self.global.connection_id);
+        memintcopy_lt(&mut out[7 + rand_len..7 + rand_len + 4], now);
+        out[7 + rand_len + 4..7 + rand_len + 8].copy_from_slice(&self.global.local_client_id[..4]);
+        memintcopy_lt(
+            &mut out[7 + rand_len + 8..7 + rand_len + 12],
+            self.global.connection_id,
+        );
         let payload_offset = data_offset;
         out[payload_offset..payload_offset + data.len()].copy_from_slice(data);
         let mut hmac_key = Vec::new();
@@ -80,9 +83,15 @@ impl AuthSHA1 {
 
 impl Protocol for AuthSHA1 {
     fn set_salt(&mut self, _salt: &str) {}
-    fn get_overhead(&self) -> usize { 0 }
-    fn need_feedback(&self) -> bool { false }
-    fn set_server_iv(&mut self, iv: Vec<u8>) { self.server_info.iv = iv; }
+    fn get_overhead(&self) -> usize {
+        0
+    }
+    fn need_feedback(&self) -> bool {
+        false
+    }
+    fn set_server_iv(&mut self, iv: Vec<u8>) {
+        self.server_info.iv = iv;
+    }
 
     fn client_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
         let mut result = Vec::new();
@@ -120,7 +129,9 @@ impl Protocol for AuthSHA1 {
             let length = ((self.recv_buffer[4] as usize) << 8) | self.recv_buffer[5] as usize;
             if !(7..8192).contains(&length) {
                 self.recv_buffer.clear();
-                return Err(crate::error::SsrError::Protocol("auth_sha1: invalid auth length".into()));
+                return Err(crate::error::SsrError::Protocol(
+                    "auth_sha1: invalid auth length".into(),
+                ));
             }
             if length > self.recv_buffer.len() {
                 return Ok(output);
@@ -131,7 +142,9 @@ impl Protocol for AuthSHA1 {
             let hash = hmac_sha1(&hmac_key, &self.recv_buffer[..length - HMAC_SHA1_LEN]);
             if hash[..HMAC_SHA1_LEN] != self.recv_buffer[length - HMAC_SHA1_LEN..length] {
                 self.recv_buffer.clear();
-                return Err(crate::error::SsrError::Protocol("auth_sha1: HMAC mismatch".into()));
+                return Err(crate::error::SsrError::Protocol(
+                    "auth_sha1: HMAC mismatch".into(),
+                ));
             }
             let rand_len = self.recv_buffer[6] as usize;
             let data_offset = 4 + 2 + 1 + rand_len + 12;
@@ -145,14 +158,18 @@ impl Protocol for AuthSHA1 {
             let length = ((self.recv_buffer[0] as usize) << 8) | self.recv_buffer[1] as usize;
             if !(7..8192).contains(&length) {
                 self.recv_buffer.clear();
-                return Err(crate::error::SsrError::Protocol("auth_sha1: invalid length".into()));
+                return Err(crate::error::SsrError::Protocol(
+                    "auth_sha1: invalid length".into(),
+                ));
             }
             if length > self.recv_buffer.len() {
                 break;
             }
             if !crate::utils::adler32::check_adler32(&self.recv_buffer[..length]) {
                 self.recv_buffer.clear();
-                return Err(crate::error::SsrError::Protocol("auth_sha1: Adler32 mismatch".into()));
+                return Err(crate::error::SsrError::Protocol(
+                    "auth_sha1: Adler32 mismatch".into(),
+                ));
             }
             let pos = self.recv_buffer[2] as usize + 2;
             let data_size = length.saturating_sub(pos + 4);

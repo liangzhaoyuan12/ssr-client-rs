@@ -1,6 +1,6 @@
-use crate::error::SsrResult;
-use crate::utils::crc32::{fill_crc32, check_crc32};
 use super::{Protocol, XorShift128Plus};
+use crate::error::SsrResult;
+use crate::utils::crc32::{check_crc32, fill_crc32};
 
 const PACK_UNIT_SIZE: usize = 2000;
 
@@ -57,8 +57,12 @@ impl VerifySimple {
 
 impl Protocol for VerifySimple {
     fn set_salt(&mut self, _salt: &str) {}
-    fn get_overhead(&self) -> usize { 0 }
-    fn need_feedback(&self) -> bool { false }
+    fn get_overhead(&self) -> usize {
+        0
+    }
+    fn need_feedback(&self) -> bool {
+        false
+    }
 
     fn client_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
         let mut result = Vec::new();
@@ -89,7 +93,9 @@ impl Protocol for VerifySimple {
 
             if !(7..8192).contains(&length) {
                 self.recv_buffer.clear();
-                return Err(crate::error::SsrError::Protocol("verify_simple: invalid length".into()));
+                return Err(crate::error::SsrError::Protocol(
+                    "verify_simple: invalid length".into(),
+                ));
             }
 
             if length > self.recv_buffer.len() {
@@ -99,12 +105,14 @@ impl Protocol for VerifySimple {
             // Check CRC32
             if !check_crc32(&self.recv_buffer[..length]) {
                 self.recv_buffer.clear();
-                return Err(crate::error::SsrError::Protocol("verify_simple: CRC32 mismatch".into()));
+                return Err(crate::error::SsrError::Protocol(
+                    "verify_simple: CRC32 mismatch".into(),
+                ));
             }
 
             let rand_len = self.recv_buffer[2] as usize;
-            let data_size = length.saturating_sub(rand_len + 6);  // total - rand_len - 2(len) - 1(rand_len_field) - 4(crc) + 1 = rand_len-1
-            let data_start = 2 + rand_len;  // 2(len) + 1(rand_len_field) + (rand_len-1)(random) = 2 + rand_len
+            let data_size = length.saturating_sub(rand_len + 6); // total - rand_len - 2(len) - 1(rand_len_field) - 4(crc) + 1 = rand_len-1
+            let data_start = 2 + rand_len; // 2(len) + 1(rand_len_field) + (rand_len-1)(random) = 2 + rand_len
 
             output.extend_from_slice(&self.recv_buffer[data_start..data_start + data_size]);
 

@@ -1,7 +1,7 @@
 use ssr_client_rs::config::SsrClientConfig;
 use ssr_client_rs::crypto::cipher_env::CipherEnv;
-use ssr_client_rs::protocol::{Protocol, ServerInfo};
 use ssr_client_rs::protocol::auth_aes128::AuthAES128;
+use ssr_client_rs::protocol::{Protocol, ServerInfo};
 
 fn main() {
     let config = SsrClientConfig {
@@ -32,7 +32,11 @@ fn main() {
     let encrypted = env.encrypt(data).unwrap();
     let decrypted = env.decrypt(&encrypted).unwrap();
     assert_eq!(decrypted, data);
-    println!("    Encrypt/decrypt: OK ({} -> {} bytes)", data.len(), encrypted.len());
+    println!(
+        "    Encrypt/decrypt: OK ({} -> {} bytes)",
+        data.len(),
+        encrypted.len()
+    );
     println!();
 
     // Test 2: Protocol
@@ -46,7 +50,11 @@ fn main() {
     protocol.init_user_key();
     let target = b"CONNECT www.google.com:443";
     let framed = protocol.client_pre_encrypt(target).unwrap();
-    println!("    Pre-encrypt: {} -> {} bytes", target.len(), framed.len());
+    println!(
+        "    Pre-encrypt: {} -> {} bytes",
+        target.len(),
+        framed.len()
+    );
     println!();
 
     // Test 3: Full pipeline
@@ -62,7 +70,10 @@ fn main() {
 
     println!("=== All pipeline tests passed! ===");
     println!();
-    println!("Note: Full proxy test requires SSR server at {}:{}", config.server, config.server_port);
+    println!(
+        "Note: Full proxy test requires SSR server at {}:{}",
+        config.server, config.server_port
+    );
     println!("The server is reachable (port 2800 open).");
     println!("To use as SOCKS5 proxy, start: cargo run --bin ssr_client");
 }

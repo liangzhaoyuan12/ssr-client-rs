@@ -14,12 +14,14 @@ use ssr_client_rs::protocol::auth_aes128::AuthAES128;
 use ssr_client_rs::protocol::auth_chain::AuthChainA;
 use ssr_client_rs::protocol::auth_sha1_v4::AuthSHA1V4;
 use ssr_client_rs::protocol::{Protocol, ServerInfo};
-use ssr_client_rs::socks5::{
-    build_udp_datagram, parse_udp_datagram, TargetAddress,
-};
+use ssr_client_rs::socks5::{build_udp_datagram, parse_udp_datagram, TargetAddress};
 
 fn si() -> ServerInfo {
-    ServerInfo { key: vec![0x42u8; 16], iv: vec![0x24u8; 16], ..Default::default() }
+    ServerInfo {
+        key: vec![0x42u8; 16],
+        iv: vec![0x24u8; 16],
+        ..Default::default()
+    }
 }
 
 /// All stream ciphers we implement (GOALS phase list: 16 implemented + none/table).

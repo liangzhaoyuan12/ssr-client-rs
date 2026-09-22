@@ -274,3 +274,18 @@
 - **e2e 回归（字节级）**: 矩阵 39/51+12SKIP 0 FAIL（覆盖改过的
   table/blowfish/aead 路径）、UDP e2e ALL_PASS、resilience 4/4、
   `cargo test` 237/0；release 构建 0 warning 0 error
+
+### ✅ Q3 rustfmt 统一（2026-09-23）
+
+- **基线**: `cargo fmt --all -- --check` 238 处 diff（散布 38 文件，多数为单行
+  函数体、超长行、枚举紧凑写法）
+- **执行**: `cargo fmt --all` 一次完成；再查 `-- --check` **exit 0**（GOALS 完成标准）
+- **diff 规模**: 38 files, +1297 / −615
+- **纯格式验证（三重）**:
+  1. `cargo fmt --all -- --check` rc=0
+  2. 字符串字面量多重集 vs HEAD: **sha256 完全一致**
+     （`git show HEAD:<f>` 逐文件提取 `"..."` → uniq -c → 对比）
+  3. 数值/协议常量（`[0-9a-fA-F]{4,}`、`Nu8`、`Nusize`）vs HEAD: **sha256 完全一致**
+- **回归全绿**: `cargo build` 0 warning 0 error、`cargo test` **237/0**、
+  `clippy --all-targets -- -D warnings` rc=0、release 0 warning、
+  矩阵 39/51+12SKIP 0 FAIL、UDP e2e ALL_PASS、resilience 4/4

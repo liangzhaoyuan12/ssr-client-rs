@@ -3,33 +3,33 @@ use crate::error::{SsrError, SsrResult};
 /// Encryption method type (28 methods)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CipherType {
-    None,           // 0
-    Table,          // 1
-    RC4,            // 2
-    RC4Md56,        // 3: rc4-md5-6
-    RC4Md5,         // 4: rc4-md5
-    AES128CFB,      // 5
-    AES192CFB,      // 6
-    AES256CFB,      // 7
-    AES128CTR,      // 8
-    AES192CTR,      // 9
-    AES256CTR,      // 10
-    BFCFB,          // 11: bf-cfb (Blowfish)
-    Camellia128CFB, // 12
-    Camellia192CFB, // 13
-    Camellia256CFB, // 14
-    CAST5CFB,       // 15
-    DESCFB,         // 16
-    IDEACFB,        // 17
-    RC2CFB,         // 18
-    SeedCFB,        // 19
-    Salsa20,        // 20
-    ChaCha20,       // 21
-    ChaCha20IETF,   // 22
-    AES128GCM,      // 23
-    AES192GCM,      // 24
-    AES256GCM,      // 25
-    ChaCha20Poly1305IETF, // 26
+    None,                  // 0
+    Table,                 // 1
+    RC4,                   // 2
+    RC4Md56,               // 3: rc4-md5-6
+    RC4Md5,                // 4: rc4-md5
+    AES128CFB,             // 5
+    AES192CFB,             // 6
+    AES256CFB,             // 7
+    AES128CTR,             // 8
+    AES192CTR,             // 9
+    AES256CTR,             // 10
+    BFCFB,                 // 11: bf-cfb (Blowfish)
+    Camellia128CFB,        // 12
+    Camellia192CFB,        // 13
+    Camellia256CFB,        // 14
+    CAST5CFB,              // 15
+    DESCFB,                // 16
+    IDEACFB,               // 17
+    RC2CFB,                // 18
+    SeedCFB,               // 19
+    Salsa20,               // 20
+    ChaCha20,              // 21
+    ChaCha20IETF,          // 22
+    AES128GCM,             // 23
+    AES192GCM,             // 24
+    AES256GCM,             // 25
+    ChaCha20Poly1305IETF,  // 26
     XChaCha20Poly1305IETF, // 27
 }
 
@@ -269,11 +269,11 @@ impl ProtocolType {
 /// Obfuscation type (6 methods)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ObfsType {
-    Plain,              // 0
-    HTTPSimple,         // 1
-    HTTPPost,           // 2
-    HTTPMix,            // 3
-    TLS12TicketAuth,    // 4
+    Plain,               // 0
+    HTTPSimple,          // 1
+    HTTPPost,            // 2
+    HTTPMix,             // 3
+    TLS12TicketAuth,     // 4
     TLS12TicketFastAuth, // 5
 }
 

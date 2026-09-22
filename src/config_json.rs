@@ -82,7 +82,10 @@ struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     fn new(s: &'a str) -> Self {
-        Parser { bytes: s.as_bytes(), pos: 0 }
+        Parser {
+            bytes: s.as_bytes(),
+            pos: 0,
+        }
     }
 
     fn skip_ws(&mut self) {
@@ -131,13 +134,14 @@ impl<'a> Parser<'a> {
     fn parse_num(&mut self) -> Result<Json, String> {
         let start = self.pos;
         while self.pos < self.bytes.len()
-            && matches!(self.bytes[self.pos],
-                b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E')
+            && matches!(
+                self.bytes[self.pos],
+                b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E'
+            )
         {
             self.pos += 1;
         }
-        let s = std::str::from_utf8(&self.bytes[start..self.pos])
-            .map_err(|e| e.to_string())?;
+        let s = std::str::from_utf8(&self.bytes[start..self.pos]).map_err(|e| e.to_string())?;
         s.parse::<f64>()
             .map(Json::Num)
             .map_err(|_| format!("invalid number '{s}'"))
@@ -189,8 +193,7 @@ impl<'a> Parser<'a> {
                         end += 1;
                     }
                     out.push_str(
-                        std::str::from_utf8(&self.bytes[start..end])
-                            .map_err(|e| e.to_string())?,
+                        std::str::from_utf8(&self.bytes[start..end]).map_err(|e| e.to_string())?,
                     );
                     self.pos = end;
                 }
@@ -266,7 +269,14 @@ pub fn config_from_json(text: &str) -> Result<SsrClientConfig, String> {
         _ => return Err("config root must be a JSON object".to_string()),
     };
 
-    let mut cfg = SsrClientConfig::new(String::new(), 0, String::new(), String::new(), String::new(), String::new());
+    let mut cfg = SsrClientConfig::new(
+        String::new(),
+        0,
+        String::new(),
+        String::new(),
+        String::new(),
+        String::new(),
+    );
 
     if let Some(v) = obj.get("server").and_then(Json::as_str) {
         cfg.server = v.to_string();

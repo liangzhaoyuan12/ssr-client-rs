@@ -1,11 +1,11 @@
-pub mod origin;
+pub mod auth_aes128;
 pub mod auth_chain;
-pub mod verify_simple;
-pub mod auth_simple;
 pub mod auth_sha1;
 pub mod auth_sha1_v2;
 pub mod auth_sha1_v4;
-pub mod auth_aes128;
+pub mod auth_simple;
+pub mod origin;
+pub mod verify_simple;
 
 use crate::error::SsrResult;
 
@@ -241,9 +241,21 @@ mod tests {
         // IPv4
         assert_eq!(get_s5_head_size(&[0x01, 0, 0, 0, 0, 0, 80], 30), 7);
         // IPv6
-        assert_eq!(get_s5_head_size(&[0x04, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 30), 19);
+        assert_eq!(
+            get_s5_head_size(
+                &[0x04, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                30
+            ),
+            19
+        );
         // Domain
-        assert_eq!(get_s5_head_size(&[0x03, 11, b'g', b'o', b'o', b'g', b'l', b'e', b'.', b'c', b'o', b'm', 0, 80], 30), 15);
+        assert_eq!(
+            get_s5_head_size(
+                &[0x03, 11, b'g', b'o', b'o', b'g', b'l', b'e', b'.', b'c', b'o', b'm', 0, 80],
+                30
+            ),
+            15
+        );
         // Empty
         assert_eq!(get_s5_head_size(&[], 30), 30);
     }

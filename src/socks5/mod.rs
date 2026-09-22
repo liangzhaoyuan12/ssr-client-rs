@@ -289,8 +289,7 @@ pub fn parse_udp_datagram(data: &[u8]) -> SsrResult<UdpDatagram> {
                 return Err(SsrError::socks5("UDP domain truncated"));
             }
             let domain = data[5..5 + domain_len].to_vec();
-            let port =
-                u16::from_be_bytes([data[5 + domain_len], data[6 + domain_len]]);
+            let port = u16::from_be_bytes([data[5 + domain_len], data[6 + domain_len]]);
             (TargetAddress::Domain(domain), port, 7 + domain_len)
         }
         ATYP_IPV6 => {
@@ -332,10 +331,7 @@ pub fn build_udp_datagram(addr: &TargetAddress, port: u16, payload: &[u8]) -> Ve
 
 /// Read exact bytes from a buffer (blocking parse helper).
 /// Returns the consumed bytes and remaining slice.
-pub fn take_bytes(
-    data: &[u8],
-    n: usize,
-) -> SsrResult<(&[u8], &[u8])> {
+pub fn take_bytes(data: &[u8], n: usize) -> SsrResult<(&[u8], &[u8])> {
     if data.len() < n {
         return Err(SsrError::socks5(format!(
             "Need {} bytes, have {}",
@@ -433,10 +429,7 @@ mod tests {
         assert_eq!(parsed.version, 5);
         assert_eq!(parsed.cmd, CMD_CONNECT);
         assert_eq!(parsed.rsv, 0);
-        assert_eq!(
-            parsed.addr,
-            TargetAddress::IPv4([93, 184, 216, 34])
-        );
+        assert_eq!(parsed.addr, TargetAddress::IPv4([93, 184, 216, 34]));
         assert_eq!(parsed.port, 80);
     }
 
@@ -504,8 +497,8 @@ mod tests {
         assert_eq!(
             parsed.addr,
             TargetAddress::IPv6([
-                0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x00, 0x00, 0x01
+                0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x01
             ])
         );
         assert_eq!(parsed.port, 8080);
@@ -605,10 +598,7 @@ mod tests {
     #[test]
     fn test_target_address_atyp() {
         assert_eq!(TargetAddress::IPv4([0; 4]).atyp(), ATYP_IPV4);
-        assert_eq!(
-            TargetAddress::Domain(vec![]).atyp(),
-            ATYP_DOMAIN
-        );
+        assert_eq!(TargetAddress::Domain(vec![]).atyp(), ATYP_DOMAIN);
         assert_eq!(TargetAddress::IPv6([0; 16]).atyp(), ATYP_IPV6);
     }
 

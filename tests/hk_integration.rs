@@ -2,6 +2,8 @@
 
 use ssr_client_rs::config::SsrClientConfig;
 use ssr_client_rs::crypto::cipher_env::CipherEnv;
+use ssr_client_rs::obfs::tls_ticket::Tls12TicketAuthObfs;
+use ssr_client_rs::obfs::Obfs;
 use ssr_client_rs::protocol::auth_sha1::AuthSHA1;
 use ssr_client_rs::protocol::auth_sha1_v2::AuthSHA1V2;
 use ssr_client_rs::protocol::auth_sha1_v4::AuthSHA1V4;
@@ -9,8 +11,6 @@ use ssr_client_rs::protocol::auth_simple::AuthSimple;
 use ssr_client_rs::protocol::origin::Origin;
 use ssr_client_rs::protocol::verify_simple::VerifySimple;
 use ssr_client_rs::protocol::{Protocol, ServerInfo};
-use ssr_client_rs::obfs::tls_ticket::Tls12TicketAuthObfs;
-use ssr_client_rs::obfs::Obfs;
 
 fn hk_config() -> SsrClientConfig {
     SsrClientConfig {
@@ -29,7 +29,6 @@ fn hk_config() -> SsrClientConfig {
         connect_timeout: 6,
         udp_timeout: 6,
     }
-
 }
 
 fn server_info() -> ServerInfo {
@@ -38,7 +37,6 @@ fn server_info() -> ServerInfo {
         iv: vec![0x24u8; 16],
         ..Default::default()
     }
-
 }
 
 #[test]
@@ -50,7 +48,6 @@ fn test_hk_config_parse() {
     assert_eq!(config.method, "aes-256-cfb");
     assert_eq!(config.protocol, "auth_aes128_sha1");
     assert_eq!(config.obfs, "tls1.2_ticket_auth");
-
 }
 
 #[test]
@@ -63,7 +60,6 @@ fn test_hk_cipher_aes256_cfb() {
     assert_ne!(encrypted, data);
     let decrypted = env.decrypt(&encrypted).unwrap();
     assert_eq!(decrypted, data);
-
 }
 
 #[test]
@@ -73,7 +69,6 @@ fn test_hk_cipher_roundtrip_large() {
     let encrypted = env.encrypt(&data).unwrap();
     let decrypted = env.decrypt(&encrypted).unwrap();
     assert_eq!(decrypted, data);
-
 }
 
 #[test]
@@ -84,7 +79,6 @@ fn test_hk_origin_pipeline() {
     assert_eq!(framed, data);
     let plain = proto.client_post_decrypt(&framed).unwrap();
     assert_eq!(plain, data);
-
 }
 
 #[test]
@@ -94,7 +88,6 @@ fn test_hk_verify_simple_pipeline() {
     let framed = proto.client_pre_encrypt(data).unwrap();
     let plain = proto.client_post_decrypt(&framed).unwrap();
     assert_eq!(plain, data);
-
 }
 
 #[test]
@@ -104,7 +97,6 @@ fn test_hk_auth_simple_pipeline() {
     let framed = proto.client_pre_encrypt(data).unwrap();
     let plain = proto.client_post_decrypt(&framed).unwrap();
     assert_eq!(plain, data);
-
 }
 
 #[test]
@@ -115,7 +107,6 @@ fn test_hk_auth_sha1_pipeline() {
     let framed = proto.client_pre_encrypt(data).unwrap();
     let plain = proto.client_post_decrypt(&framed).unwrap();
     assert_eq!(plain, data);
-
 }
 
 #[test]
@@ -126,7 +117,6 @@ fn test_hk_auth_sha1_v2_pipeline() {
     let framed = proto.client_pre_encrypt(data).unwrap();
     let plain = proto.client_post_decrypt(&framed).unwrap();
     assert_eq!(plain, data);
-
 }
 
 #[test]
@@ -141,7 +131,6 @@ fn test_hk_auth_sha1_v4_pipeline() {
     let framed = proto.client_pre_encrypt(data).unwrap();
     let plain = proto.client_post_decrypt(&framed).unwrap();
     assert_eq!(plain, data);
-
 }
 
 #[test]
@@ -151,7 +140,6 @@ fn test_hk_tls_ticket_obfs() {
     let data = b"tls ticket auth test for hk";
     let encoded = obfs.client_encode(data).unwrap();
     let _decoded = obfs.client_decode(&encoded).unwrap();
-
 }
 
 #[test]
@@ -165,7 +153,6 @@ fn test_hk_full_encrypt_protocol_pipeline() {
     let decrypted = env.decrypt(&encrypted).unwrap();
     let plain = proto.client_post_decrypt(&decrypted).unwrap();
     assert_eq!(plain, data);
-
 }
 
 #[test]
@@ -179,7 +166,6 @@ fn test_hk_auth_sha1_full_pipeline() {
     let decrypted = env.decrypt(&encrypted).unwrap();
     let plain = proto.client_post_decrypt(&decrypted).unwrap();
     assert_eq!(plain, data);
-
 }
 
 #[test]
@@ -198,7 +184,6 @@ fn test_hk_auth_sha1_v4_full_pipeline() {
     let decrypted = env.decrypt(&encrypted).unwrap();
     let plain = proto.client_post_decrypt(&decrypted).unwrap();
     assert_eq!(plain, data);
-
 }
 
 #[test]
@@ -217,5 +202,4 @@ fn test_hk_large_data_pipeline() {
     let decrypted = env.decrypt(&encrypted).unwrap();
     let plain = proto.client_post_decrypt(&decrypted).unwrap();
     assert_eq!(plain, data);
-
 }

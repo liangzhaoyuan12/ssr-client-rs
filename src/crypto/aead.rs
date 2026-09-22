@@ -24,9 +24,9 @@ use crate::error::{SsrError, SsrResult};
 use crate::utils::hash::hmac_sha1;
 
 use aes_gcm::aead::{AeadInOut, KeyInit};
-use aes_gcm::{Nonce, Tag};
-use aes_gcm::aes::Aes192;
 use aes_gcm::aes::cipher::consts::U12;
+use aes_gcm::aes::Aes192;
+use aes_gcm::{Nonce, Tag};
 
 /// `aes-gcm` 0.11 only exports the 128- and 256-bit aliases, so define 192 here.
 type Aes192Gcm = aes_gcm::AesGcm<Aes192, U12>;
@@ -196,51 +196,41 @@ impl AeadCipher {
         let tag = Tag::try_from(tag_bytes)
             .map_err(|_| SsrError::crypto("bad AEAD tag length".to_string()))?;
         let r = match self {
-            AeadCipher::Aes128Gcm(c) => {
-                c.decrypt_inout_detached(
-                    &Nonce::try_from(nonce)
-                        .map_err(|_| SsrError::crypto("bad AEAD nonce length".to_string()))?,
-                    b"",
-                    (&mut buf[..]).into(),
-                    &tag,
-                )
-            }
-            AeadCipher::Aes192Gcm(c) => {
-                c.decrypt_inout_detached(
-                    &Nonce::try_from(nonce)
-                        .map_err(|_| SsrError::crypto("bad AEAD nonce length".to_string()))?,
-                    b"",
-                    (&mut buf[..]).into(),
-                    &tag,
-                )
-            }
-            AeadCipher::Aes256Gcm(c) => {
-                c.decrypt_inout_detached(
-                    &Nonce::try_from(nonce)
-                        .map_err(|_| SsrError::crypto("bad AEAD nonce length".to_string()))?,
-                    b"",
-                    (&mut buf[..]).into(),
-                    &tag,
-                )
-            }
-            AeadCipher::ChaCha20Poly1305(c) => {
-                c.decrypt_inout_detached(
-                    &Nonce::try_from(nonce)
-                        .map_err(|_| SsrError::crypto("bad AEAD nonce length".to_string()))?,
-                    b"",
-                    (&mut buf[..]).into(),
-                    &tag,
-                )
-            }
-            AeadCipher::XChaCha20Poly1305(c) => {
-                c.decrypt_inout_detached(
-                    &Nonce::try_from(nonce)
-                        .map_err(|_| SsrError::crypto("bad AEAD nonce length".to_string()))?,
-                    b"",
-                    (&mut buf[..]).into(),
-                    &tag,
-                )
-            }
+            AeadCipher::Aes128Gcm(c) => c.decrypt_inout_detached(
+                &Nonce::try_from(nonce)
+                    .map_err(|_| SsrError::crypto("bad AEAD nonce length".to_string()))?,
+                b"",
+                (&mut buf[..]).into(),
+                &tag,
+            ),
+            AeadCipher::Aes192Gcm(c) => c.decrypt_inout_detached(
+                &Nonce::try_from(nonce)
+                    .map_err(|_| SsrError::crypto("bad AEAD nonce length".to_string()))?,
+                b"",
+                (&mut buf[..]).into(),
+                &tag,
+            ),
+            AeadCipher::Aes256Gcm(c) => c.decrypt_inout_detached(
+                &Nonce::try_from(nonce)
+                    .map_err(|_| SsrError::crypto("bad AEAD nonce length".to_string()))?,
+                b"",
+                (&mut buf[..]).into(),
+                &tag,
+            ),
+            AeadCipher::ChaCha20Poly1305(c) => c.decrypt_inout_detached(
+                &Nonce::try_from(nonce)
+                    .map_err(|_| SsrError::crypto("bad AEAD nonce length".to_string()))?,
+                b"",
+                (&mut buf[..]).into(),
+                &tag,
+            ),
+            AeadCipher::XChaCha20Poly1305(c) => c.decrypt_inout_detached(
+                &Nonce::try_from(nonce)
+                    .map_err(|_| SsrError::crypto("bad AEAD nonce length".to_string()))?,
+                b"",
+                (&mut buf[..]).into(),
+                &tag,
+            ),
         };
         r.map_err(|_| SsrError::crypto("AEAD authentication failed".to_string()))?;
         Ok(buf)
@@ -351,7 +341,11 @@ impl AeadDecryptCtx {
             }
             let salt = self.buf[..self.key_len].to_vec();
             self.buf.drain(..self.key_len);
-            self.cipher = Some(AeadCipher::new_from_salt(self.method, &self.master_key, &salt)?);
+            self.cipher = Some(AeadCipher::new_from_salt(
+                self.method,
+                &self.master_key,
+                &salt,
+            )?);
             self.init = true;
         }
         let cipher = self.cipher.as_ref().expect("set above");

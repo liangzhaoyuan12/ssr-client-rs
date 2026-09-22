@@ -1,13 +1,17 @@
-use crate::error::SsrResult;
 use super::Protocol;
+use crate::error::SsrResult;
 
 /// Origin protocol — pass-through, no framing
 pub struct Origin;
 
 impl Protocol for Origin {
     fn set_salt(&mut self, _salt: &str) {}
-    fn get_overhead(&self) -> usize { 0 }
-    fn need_feedback(&self) -> bool { false }
+    fn get_overhead(&self) -> usize {
+        0
+    }
+    fn need_feedback(&self) -> bool {
+        false
+    }
 
     fn client_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
         Ok(plaindata.to_vec())

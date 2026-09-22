@@ -105,8 +105,9 @@ pub fn stream_encrypt(
         CipherType::ChaCha20 => {
             // Original ChaCha20 (8-byte nonce, C: libsodium
             // crypto_stream_chacha20_xor_ic, encrypt.c:208-209).
-            let mut cipher = <chacha20::ChaCha20Legacy as cipher::KeyIvInit>::new_from_slices(key, iv)
-                .map_err(|e| SsrError::crypto(format!("ChaCha20 init: {e}")))?;
+            let mut cipher =
+                <chacha20::ChaCha20Legacy as cipher::KeyIvInit>::new_from_slices(key, iv)
+                    .map_err(|e| SsrError::crypto(format!("ChaCha20 init: {e}")))?;
             let mut output = plaintext.to_vec();
             cipher.apply_keystream(&mut output);
             Ok(output)
@@ -214,8 +215,9 @@ pub fn stream_decrypt(
         CipherType::ChaCha20 => {
             // Original ChaCha20 (8-byte nonce, C: libsodium
             // crypto_stream_chacha20_xor_ic, encrypt.c:208-209).
-            let mut cipher = <chacha20::ChaCha20Legacy as cipher::KeyIvInit>::new_from_slices(key, iv)
-                .map_err(|e| SsrError::crypto(format!("ChaCha20 init: {e}")))?;
+            let mut cipher =
+                <chacha20::ChaCha20Legacy as cipher::KeyIvInit>::new_from_slices(key, iv)
+                    .map_err(|e| SsrError::crypto(format!("ChaCha20 init: {e}")))?;
             let mut output = ciphertext.to_vec();
             cipher.apply_keystream(&mut output);
             Ok(output)

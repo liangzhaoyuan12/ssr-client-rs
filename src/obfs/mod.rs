@@ -1,5 +1,5 @@
-pub mod plain;
 pub mod http_simple;
+pub mod plain;
 pub mod tls_ticket;
 
 use crate::error::SsrResult;
@@ -37,7 +37,12 @@ pub trait Obfs: Send {
 }
 
 /// Create an obfs instance by name.
-pub fn create_obfs(name: &str, server_host: &str, server_port: u16, extra_param: &str) -> Option<Box<dyn Obfs>> {
+pub fn create_obfs(
+    name: &str,
+    server_host: &str,
+    server_port: u16,
+    extra_param: &str,
+) -> Option<Box<dyn Obfs>> {
     match name {
         "plain" => Some(Box::new(plain::PlainObfs::new())),
         "http_simple" => Some(Box::new(http_simple::HttpSimpleObfs::new(

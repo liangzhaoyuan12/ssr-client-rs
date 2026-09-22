@@ -1,5 +1,5 @@
-use md5::Md5;
 use digest::Digest;
+use md5::Md5;
 
 /// EVP_BytesToKey key derivation (MD5 iteration)
 /// Used by Shadowsocks to derive encryption key from password.

@@ -1,8 +1,8 @@
+use super::{memintcopy_lt, GlobalData, Protocol, ServerInfo, XorShift128Plus};
+use crate::crypto::bytes_to_key::bytes_to_key;
 use crate::error::SsrResult;
 use crate::utils::base64::b64encode;
 use crate::utils::hash::{hmac_md5, hmac_sha1, md5, sha1};
-use crate::crypto::bytes_to_key::bytes_to_key;
-use super::{Protocol, GlobalData, ServerInfo, memintcopy_lt, XorShift128Plus};
 
 const PACK_UNIT_SIZE: usize = 2000;
 
@@ -18,17 +18,27 @@ pub struct AuthAES128 {
     recv_id: u32,
     last_data_len: usize,
     salt: &'static str,
-    hash_fn: fn(&[u8]) -> Vec<u8>,  // md5 (16B) or sha1 (20B)
-    hmac_fn: fn(&[u8], &[u8]) -> Vec<u8>,  // hmac_md5 or hmac_sha1
+    hash_fn: fn(&[u8]) -> Vec<u8>,        // md5 (16B) or sha1 (20B)
+    hmac_fn: fn(&[u8], &[u8]) -> Vec<u8>, // hmac_md5 or hmac_sha1
     hash_len: usize,
     rng: XorShift128Plus,
 }
 
-fn hexs(b: &[u8]) -> String { b.iter().map(|x| format!("{:02x}", x)).collect() }
-fn hash_md5_v(data: &[u8]) -> Vec<u8> { md5(data).to_vec() }
-fn hash_sha1_v(data: &[u8]) -> Vec<u8> { sha1(data).to_vec() }
-fn hmac_md5_v(key: &[u8], data: &[u8]) -> Vec<u8> { hmac_md5(key, data).to_vec() }
-fn hmac_sha1_v(key: &[u8], data: &[u8]) -> Vec<u8> { hmac_sha1(key, data).to_vec() }
+fn hexs(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{:02x}", x)).collect()
+}
+fn hash_md5_v(data: &[u8]) -> Vec<u8> {
+    md5(data).to_vec()
+}
+fn hash_sha1_v(data: &[u8]) -> Vec<u8> {
+    sha1(data).to_vec()
+}
+fn hmac_md5_v(key: &[u8], data: &[u8]) -> Vec<u8> {
+    hmac_md5(key, data).to_vec()
+}
+fn hmac_sha1_v(key: &[u8], data: &[u8]) -> Vec<u8> {
+    hmac_sha1(key, data).to_vec()
+}
 
 impl AuthAES128 {
     pub fn new_md5(server_info: ServerInfo) -> Self {
@@ -102,7 +112,10 @@ impl AuthAES128 {
 
     fn get_rand_len(&mut self, datalength: usize, fulldatalength: usize) -> usize {
         // C code get_rand_len (auth.c:1000-1015)
-        if datalength > 1300 || self.last_data_len > 1300 || fulldatalength >= self.server_info.buffer_size as usize {
+        if datalength > 1300
+            || self.last_data_len > 1300
+            || fulldatalength >= self.server_info.buffer_size as usize
+        {
             return 0;
         }
         if datalength > 1100 {
@@ -188,7 +201,11 @@ impl AuthAES128 {
         let mut key = Vec::new();
         key.extend_from_slice(&self.server_info.iv);
         key.extend_from_slice(&self.server_info.key);
-        ssr_debug!("[pack_auth] iv={} key={}", hexs(&self.server_info.iv), hexs(&self.server_info.key));
+        ssr_debug!(
+            "[pack_auth] iv={} key={}",
+            hexs(&self.server_info.iv),
+            hexs(&self.server_info.key)
+        );
 
         // Random padding
         use rand::RngCore;
@@ -285,7 +302,9 @@ pub fn aes_128_cbc_decrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
     for chunk in data.chunks(16) {
         // Non-block-aligned tail can only come from malformed input (the wire
         // is always 16-byte aligned); stop instead of panicking on it.
-        let Ok(block_arr) = aes::Block::try_from(chunk) else { break; };
+        let Ok(block_arr) = aes::Block::try_from(chunk) else {
+            break;
+        };
         let mut decrypted = block_arr;
         cipher.decrypt_block(&mut decrypted);
         let mut plain = [0u8; 16];
@@ -311,8 +330,12 @@ impl Protocol for AuthAES128 {
         // Salt is set via constructor
         let _ = salt;
     }
-    fn get_overhead(&self) -> usize { 9 }
-    fn need_feedback(&self) -> bool { true }
+    fn get_overhead(&self) -> usize {
+        9
+    }
+    fn need_feedback(&self) -> bool {
+        true
+    }
 
     /// MUST override the trait: `ObfsRelay::new` calls this through
     /// `Box<dyn Protocol>`, which silently resolved to the default no-op while
@@ -399,7 +422,9 @@ impl Protocol for AuthAES128 {
             let hash = (self.hmac_fn)(&key, &self.recv_buffer[..2]);
             if hash[0] != self.recv_buffer[2] || hash[1] != self.recv_buffer[3] {
                 self.recv_buffer.clear();
-                return Err(crate::error::SsrError::Protocol("auth_aes128: HMAC mismatch".into()));
+                return Err(crate::error::SsrError::Protocol(
+                    "auth_aes128: HMAC mismatch".into(),
+                ));
             }
 
             // Length (little-endian)
@@ -407,7 +432,9 @@ impl Protocol for AuthAES128 {
 
             if !(8..8192).contains(&length) {
                 self.recv_buffer.clear();
-                return Err(crate::error::SsrError::Protocol("auth_aes128: invalid length".into()));
+                return Err(crate::error::SsrError::Protocol(
+                    "auth_aes128: invalid length".into(),
+                ));
             }
 
             if length > self.recv_buffer.len() {
@@ -418,7 +445,9 @@ impl Protocol for AuthAES128 {
             let hash = (self.hmac_fn)(&key, &self.recv_buffer[..length - 4]);
             if hash[..4] != self.recv_buffer[length - 4..length] {
                 self.recv_buffer.clear();
-                return Err(crate::error::SsrError::Protocol("auth_aes128: trailing HMAC mismatch".into()));
+                return Err(crate::error::SsrError::Protocol(
+                    "auth_aes128: trailing HMAC mismatch".into(),
+                ));
             }
 
             self.recv_id += 1;
@@ -452,20 +481,20 @@ mod tests {
             ..Default::default()
         };
         let mut proto = AuthAES128::new_md5(server_info);
-        
+
         // Initialize user key
         proto.init_user_key();
-        
+
         // Pack two data packets
         let data1 = b"hello auth_aes128 part 1";
         let data2 = b"hello auth_aes128 part 2";
         let packed1 = proto.pack_data(data1, data1.len());
         let packed2 = proto.pack_data(data2, data2.len());
-        
+
         // Combine and decrypt
         let mut combined = packed1;
         combined.extend_from_slice(&packed2);
-        
+
         let plain = proto.client_post_decrypt(&combined).unwrap();
         assert_eq!(&plain[..data1.len()], data1);
         assert_eq!(&plain[data1.len()..], data2);

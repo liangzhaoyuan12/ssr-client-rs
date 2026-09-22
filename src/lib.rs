@@ -18,6 +18,6 @@ pub use error::{SsrError, SsrResult};
 pub use local::SsrClient;
 pub use relay::TcpRelay;
 pub use socks5::{
-    ConnectRequest, MethodNegotiation, TargetAddress, ATYP_DOMAIN, ATYP_IPV4, ATYP_IPV6,
-    CMD_BIND, CMD_CONNECT, CMD_UDP_ASSOCIATE,
+    ConnectRequest, MethodNegotiation, TargetAddress, ATYP_DOMAIN, ATYP_IPV4, ATYP_IPV6, CMD_BIND,
+    CMD_CONNECT, CMD_UDP_ASSOCIATE,
 };

@@ -1,8 +1,8 @@
-use crate::error::{SsrError, SsrResult};
-use crate::utils::hash::hmac_md5;
+use super::{memintcopy_lt, GlobalData, Protocol, ServerInfo};
 use crate::crypto::bytes_to_key::bytes_to_key;
+use crate::error::{SsrError, SsrResult};
 use crate::utils::base64::b64encode;
-use super::{Protocol, GlobalData, ServerInfo, memintcopy_lt};
+use crate::utils::hash::hmac_md5;
 use cipher::{BlockCipherEncrypt, KeyInit, StreamCipher as _};
 type Aes128Enc = aes::Aes128;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -317,7 +317,11 @@ impl AuthChainA {
             tcp_mss: 1460,
             salt,
             rand_len_fn: rand_len_a,
-            rand_len_ctx: RandLenCtx { overhead: server_info.overhead, b: None, c: None },
+            rand_len_ctx: RandLenCtx {
+                overhead: server_info.overhead,
+                b: None,
+                c: None,
+            },
         };
         local.random_client.next_u64();
         local.random_server.next_u64();
@@ -415,11 +419,7 @@ impl AuthChainA {
         }
         let rand_len = Self::udp_rand_len(&mut self.local.random_client, &md5data);
         // auth_chain_a_encryptor(true, "rc4", user_key, md5data, plain)
-        let mixed_key = format!(
-            "{}{}",
-            b64encode(&self.local.user_key),
-            b64encode(&md5data)
-        );
+        let mixed_key = format!("{}{}", b64encode(&self.local.user_key), b64encode(&md5data));
         let mut out = rc4_once(&mixed_key, plaindata);
         let mut rnd = vec![0u8; rand_len];
         rand::thread_rng().fill_bytes(&mut rnd);
@@ -435,7 +435,9 @@ impl AuthChainA {
     /// Returns the decrypted datagram; `Err` means drop (C returns 0).
     fn udp_post_inner(&mut self, data: &[u8]) -> SsrResult<Vec<u8>> {
         if data.len() <= 8 {
-            return Err(SsrError::Protocol("auth_chain: udp datagram too short".into()));
+            return Err(SsrError::Protocol(
+                "auth_chain: udp datagram too short".into(),
+            ));
         }
         let verify = hmac_md5(&self.local.user_key, &data[..data.len() - 1]);
         if verify[0] != data[data.len() - 1] {
@@ -445,24 +447,22 @@ impl AuthChainA {
         let hash = hmac_md5(&self.server_info.key, &data[data.len() - 8..data.len() - 1]);
         let rand_len = Self::udp_rand_len(&mut self.local.random_server, &hash);
         if data.len() < rand_len + 8 {
-            return Err(SsrError::Protocol("auth_chain: udp datagram truncated".into()));
+            return Err(SsrError::Protocol(
+                "auth_chain: udp datagram truncated".into(),
+            ));
         }
         let outlength = data.len() - rand_len - 8;
-        let password = format!(
-            "{}{}",
-            b64encode(&self.local.user_key),
-            b64encode(&hash)
-        );
+        let password = format!("{}{}", b64encode(&self.local.user_key), b64encode(&hash));
         Ok(rc4_once(&password, &data[..outlength]))
     }
 
     fn init_rc4(&mut self, password: &str) {
         // Derive RC4 key using EVP_BytesToKey (same as cipher_env_new_instance)
         let key = bytes_to_key(password.as_bytes(), 16); // RC4 key size is 16
-        let enc = <rc4::Rc4 as KeyInit>::new_from_slice(&key)
-            .expect("RC4 key init should not fail");
-        let dec = <rc4::Rc4 as KeyInit>::new_from_slice(&key)
-            .expect("RC4 key init should not fail");
+        let enc =
+            <rc4::Rc4 as KeyInit>::new_from_slice(&key).expect("RC4 key init should not fail");
+        let dec =
+            <rc4::Rc4 as KeyInit>::new_from_slice(&key).expect("RC4 key init should not fail");
         self.local.encrypt_ctx = Some(enc);
         self.local.decrypt_ctx = Some(dec);
     }
@@ -488,8 +488,6 @@ impl AuthChainA {
         }
         output
     }
-
-
 
     fn pack_client_data(&mut self, data: &[u8]) -> Vec<u8> {
         let rand_len = Self::get_rand_len(&mut self.local, data.len());
@@ -620,7 +618,6 @@ impl AuthChainA {
         out
     }
 
-
     fn client_pre_encrypt_inner(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
         let mut result = Vec::new();
         let mut data = plaindata;
@@ -659,18 +656,31 @@ impl AuthChainA {
     /// the server's server_pre_encrypt, so there is no header to skip.
     fn client_post_decrypt_inner(&mut self, data: &[u8]) -> SsrResult<Vec<u8>> {
         if self.local.recv_buffer.len() + data.len() > 16384 {
-            return Err(crate::error::SsrError::Protocol("auth_chain: recv buffer overflow".into()));
+            return Err(crate::error::SsrError::Protocol(
+                "auth_chain: recv buffer overflow".into(),
+            ));
         }
         self.local.recv_buffer.extend_from_slice(data);
 
         let mut output = Vec::new();
-        ssr_debug!("[acapostd] feed {} bytes, buf={} first16={}", data.len(), self.local.recv_buffer.len(),
-            self.local.recv_buffer.iter().take(16).map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(""));
+        ssr_debug!(
+            "[acapostd] feed {} bytes, buf={} first16={}",
+            data.len(),
+            self.local.recv_buffer.len(),
+            self.local
+                .recv_buffer
+                .iter()
+                .take(16)
+                .map(|b| format!("{:02x}", b))
+                .collect::<Vec<_>>()
+                .join("")
+        );
 
         while self.local.recv_buffer.len() > 4 {
             // data_len is XORed with last_server_hash[14..16] (server direction)
-            let data_len = (((self.local.recv_buffer[1] ^ self.local.last_server_hash[15]) as usize) << 8)
-                + (self.local.recv_buffer[0] ^ self.local.last_server_hash[14]) as usize;
+            let data_len =
+                (((self.local.recv_buffer[1] ^ self.local.last_server_hash[15]) as usize) << 8)
+                    + (self.local.recv_buffer[0] ^ self.local.last_server_hash[14]) as usize;
 
             // Reinit random_server from last_server_hash + data_len, so that the
             // rand_len draw and the start_pos draw share one PRNG stream — same
@@ -679,12 +689,19 @@ impl AuthChainA {
             let mut len = data_len + rand_len;
             if len >= SSR_BUFF_SIZE * 2 {
                 self.local.recv_buffer.clear();
-                return Err(crate::error::SsrError::Protocol("auth_chain: over size".into()));
+                return Err(crate::error::SsrError::Protocol(
+                    "auth_chain: over size".into(),
+                ));
             }
             len += 4; // +2 length field +2 HMAC
             if len > self.local.recv_buffer.len() {
-                ssr_debug!("[acapostd] incomplete: data_len={} rand_len={} need={} have={}",
-                    data_len, rand_len, len, self.local.recv_buffer.len());
+                ssr_debug!(
+                    "[acapostd] incomplete: data_len={} rand_len={} need={} have={}",
+                    data_len,
+                    rand_len,
+                    len,
+                    self.local.recv_buffer.len()
+                );
                 break;
             }
 
@@ -693,12 +710,26 @@ impl AuthChainA {
             key.extend_from_slice(&self.local.recv_id.to_le_bytes());
             let hash = hmac_md5(&key, &self.local.recv_buffer[..len - 2]);
             if hash[..2] != self.local.recv_buffer[len - 2..len] {
-                ssr_debug!("[acapostd] HMAC mismatch: data_len={} rand_len={} recv_id={} need={} have={}",
-                    data_len, rand_len, self.local.recv_id,
-                    hash[..2].iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(""),
-                    self.local.recv_buffer[len-2..len].iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(""));
+                ssr_debug!(
+                    "[acapostd] HMAC mismatch: data_len={} rand_len={} recv_id={} need={} have={}",
+                    data_len,
+                    rand_len,
+                    self.local.recv_id,
+                    hash[..2]
+                        .iter()
+                        .map(|b| format!("{:02x}", b))
+                        .collect::<Vec<_>>()
+                        .join(""),
+                    self.local.recv_buffer[len - 2..len]
+                        .iter()
+                        .map(|b| format!("{:02x}", b))
+                        .collect::<Vec<_>>()
+                        .join("")
+                );
                 self.local.recv_buffer.clear();
-                return Err(crate::error::SsrError::Protocol("auth_chain: HMAC mismatch".into()));
+                return Err(crate::error::SsrError::Protocol(
+                    "auth_chain: HMAC mismatch".into(),
+                ));
             }
 
             // Payload offset continues the random_server stream reinit'd above
@@ -724,7 +755,11 @@ impl AuthChainA {
             self.local.last_server_hash = hash;
             self.local.recv_id += 1;
             self.local.recv_buffer.drain(..len);
-            ssr_debug!("[acapostd] packet ok: data_len={} -> out_total={}", data_len, output.len());
+            ssr_debug!(
+                "[acapostd] packet ok: data_len={} -> out_total={}",
+                data_len,
+                output.len()
+            );
         }
 
         Ok(output)
@@ -749,7 +784,9 @@ impl Protocol for AuthChainA {
         4
     }
 
-    fn set_server_iv(&mut self, iv: Vec<u8>) { self.server_info.iv = iv; }
+    fn set_server_iv(&mut self, iv: Vec<u8>) {
+        self.server_info.iv = iv;
+    }
 
     fn need_feedback(&self) -> bool {
         true
@@ -811,9 +848,15 @@ impl AuthChainB {
 
 impl Protocol for AuthChainB {
     fn set_salt(&mut self, _salt: &str) {}
-    fn get_overhead(&self) -> usize { 4 }
-    fn need_feedback(&self) -> bool { true }
-    fn set_server_iv(&mut self, iv: Vec<u8>) { self.inner.set_server_iv(iv); }
+    fn get_overhead(&self) -> usize {
+        4
+    }
+    fn need_feedback(&self) -> bool {
+        true
+    }
+    fn set_server_iv(&mut self, iv: Vec<u8>) {
+        self.inner.set_server_iv(iv);
+    }
 
     fn client_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
         // Generic C path: auth_chain_a_client_pre_encrypt with the b variant's
@@ -880,9 +923,15 @@ impl Protocol for AuthChainC {
     }
 
     fn set_salt(&mut self, _salt: &str) {}
-    fn get_overhead(&self) -> usize { 4 }
-    fn need_feedback(&self) -> bool { true }
-    fn set_server_iv(&mut self, iv: Vec<u8>) { self.inner.set_server_iv(iv); }
+    fn get_overhead(&self) -> usize {
+        4
+    }
+    fn need_feedback(&self) -> bool {
+        true
+    }
+    fn set_server_iv(&mut self, iv: Vec<u8>) {
+        self.inner.set_server_iv(iv);
+    }
 
     fn client_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
         // Generic C path: auth_chain_a_client_pre_encrypt with the c variant's
@@ -922,7 +971,13 @@ impl AuthChainD {
         let mut random = Shift128plusCtx::from_bin(key);
         let list_len = (random.next_u64() % (8 + 16) + (4 + 8)) as usize;
         let mut data_size_list0: Vec<i32> = (0..64) // max size
-            .map(|i| if i < list_len { (random.next_u64() % 2340 % 2040 % 1440) as i32 } else { 0 })
+            .map(|i| {
+                if i < list_len {
+                    (random.next_u64() % 2340 % 2040 % 1440) as i32
+                } else {
+                    0
+                }
+            })
             .collect();
         data_size_list0[..list_len].sort();
 
@@ -952,9 +1007,15 @@ impl Protocol for AuthChainD {
     }
 
     fn set_salt(&mut self, _salt: &str) {}
-    fn get_overhead(&self) -> usize { 4 }
-    fn need_feedback(&self) -> bool { true }
-    fn set_server_iv(&mut self, iv: Vec<u8>) { self.inner.set_server_iv(iv); }
+    fn get_overhead(&self) -> usize {
+        4
+    }
+    fn need_feedback(&self) -> bool {
+        true
+    }
+    fn set_server_iv(&mut self, iv: Vec<u8>) {
+        self.inner.set_server_iv(iv);
+    }
 
     fn client_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
         // Generic C path with the d variant's get_tcp_rand_len callback
@@ -995,9 +1056,15 @@ impl Protocol for AuthChainE {
     }
 
     fn set_salt(&mut self, _salt: &str) {}
-    fn get_overhead(&self) -> usize { 4 }
-    fn need_feedback(&self) -> bool { true }
-    fn set_server_iv(&mut self, iv: Vec<u8>) { self.inner.set_server_iv(iv); }
+    fn get_overhead(&self) -> usize {
+        4
+    }
+    fn need_feedback(&self) -> bool {
+        true
+    }
+    fn set_server_iv(&mut self, iv: Vec<u8>) {
+        self.inner.set_server_iv(iv);
+    }
 
     fn client_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
         // Generic C path with the e variant's get_tcp_rand_len callback
@@ -1095,7 +1162,13 @@ impl AuthChainF {
         let mut random = Shift128plusCtx::from_bin(&new_key);
         let list_len = (random.next_u64() % (8 + 16) + (4 + 8)) as usize;
         let mut data_size_list0: Vec<i32> = (0..64)
-            .map(|i| if i < list_len { (random.next_u64() % 2340 % 2040 % 1440) as i32 } else { 0 })
+            .map(|i| {
+                if i < list_len {
+                    (random.next_u64() % 2340 % 2040 % 1440) as i32
+                } else {
+                    0
+                }
+            })
             .collect();
         data_size_list0[..list_len].sort();
 
@@ -1124,9 +1197,15 @@ impl Protocol for AuthChainF {
     }
 
     fn set_salt(&mut self, _salt: &str) {}
-    fn get_overhead(&self) -> usize { 4 }
-    fn need_feedback(&self) -> bool { true }
-    fn set_server_iv(&mut self, iv: Vec<u8>) { self.inner.set_server_iv(iv); }
+    fn get_overhead(&self) -> usize {
+        4
+    }
+    fn need_feedback(&self) -> bool {
+        true
+    }
+    fn set_server_iv(&mut self, iv: Vec<u8>) {
+        self.inner.set_server_iv(iv);
+    }
 
     fn client_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
         // Generic C path — F shares E's get_tcp_rand_len callback (f_new_obfs
@@ -1189,7 +1268,7 @@ mod tests {
         assert_eq!(AuthChainF::parse_key_change_interval("#86400#"), 86400);
         assert_eq!(AuthChainF::parse_key_change_interval("#1800#"), 1800);
         assert_eq!(AuthChainF::parse_key_change_interval("x#72#"), 86400); // l == 2 rejected
-        // C strtoll base0: 0x hex and leading-0 octal
+                                                                           // C strtoll base0: 0x hex and leading-0 octal
         assert_eq!(AuthChainF::parse_key_change_interval("x#0x100#"), 256);
         assert_eq!(AuthChainF::parse_key_change_interval("x#010#"), 8);
         // no # / empty / zero / trailing form fall back to the default

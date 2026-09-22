@@ -86,9 +86,7 @@ impl UdpRelay {
             .await
             .map_err(|e| SsrError::Connection(format!("resolve {}: {e}", config.server)))?
             .next()
-            .ok_or_else(|| {
-                SsrError::Connection(format!("no address for {}", config.server))
-            })?;
+            .ok_or_else(|| SsrError::Connection(format!("no address for {}", config.server)))?;
 
         let env = CipherEnv::new(&config.password, &config.method)?;
         let method = CipherType::from_name(&config.method)?;
@@ -176,7 +174,10 @@ impl UdpRelay {
             }
         };
         if enc.len() > MAX_UDP_PACKET_SIZE {
-            ssr_debug!("[udp] encrypted datagram too large ({}), dropped", enc.len());
+            ssr_debug!(
+                "[udp] encrypted datagram too large ({}), dropped",
+                enc.len()
+            );
             return;
         }
 
@@ -205,7 +206,11 @@ impl UdpRelay {
             ssr_debug!("[udp] too many sessions, dropping");
             return None;
         }
-        let bind_addr = if self.server.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" };
+        let bind_addr = if self.server.is_ipv4() {
+            "0.0.0.0:0"
+        } else {
+            "[::]:0"
+        };
         let sock = match UdpSocket::bind(bind_addr).await {
             Ok(s) => Arc::new(s),
             Err(e) => {

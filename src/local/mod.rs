@@ -165,7 +165,7 @@ impl ObfsRelay {
         // The protocol's MAC key prefix must be the cipher IV we transmit
         // (C ssr_executive.c:400 sets server_info.iv = enc_ctx_get_iv()).
         protocol.set_server_iv(iv.clone());
-        
+
         Ok(Self {
             local_read,
             local_write,
@@ -213,7 +213,8 @@ impl ObfsRelay {
             let first_read = tokio::time::timeout(
                 std::time::Duration::from_secs(first_wait_s),
                 self.local_read.read(&mut local_buf),
-            ).await;
+            )
+            .await;
             let first_data_len = match first_read {
                 Ok(Ok(0)) => {
                     ssr_debug!("[relay] Client closed before sending data");
@@ -235,10 +236,15 @@ impl ObfsRelay {
             // Combine address + first data for protocol layer
             let mut combined = self.addr_pkg.clone();
             combined.extend_from_slice(&local_buf[..first_data_len]);
-            ssr_debug!("[relay] Sending combined address+data: {} bytes", combined.len());
+            ssr_debug!(
+                "[relay] Sending combined address+data: {} bytes",
+                combined.len()
+            );
             let framed = self.protocol.client_pre_encrypt(&combined)?;
             ssr_debug!("[relay] Address framed: {} bytes", framed.len());
-            let mut encrypted = self.cipher_env.encrypt_ctx(&mut self.encrypt_ctx, &framed, self.first_encrypt)?;
+            let mut encrypted =
+                self.cipher_env
+                    .encrypt_ctx(&mut self.encrypt_ctx, &framed, self.first_encrypt)?;
             if self.first_encrypt {
                 let mut with_iv = Vec::with_capacity(self.cipher_iv.len() + encrypted.len());
                 with_iv.extend_from_slice(&self.cipher_iv);
@@ -246,10 +252,26 @@ impl ObfsRelay {
                 encrypted = with_iv;
                 self.first_encrypt = false;
             }
-            ssr_debug!("[relay] Encrypted: {} bytes, first 48: {}", encrypted.len(), encrypted.iter().take(48).map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" "));
+            ssr_debug!(
+                "[relay] Encrypted: {} bytes, first 48: {}",
+                encrypted.len(),
+                encrypted
+                    .iter()
+                    .take(48)
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
             let encoded = self.obfs.client_encode(&encrypted)?;
             ssr_debug!("[relay] Address obfs encoded: {} bytes", encoded.len());
-            ssr_debug!("[relay] FULL HEX: {}", encoded.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(""));
+            ssr_debug!(
+                "[relay] FULL HEX: {}",
+                encoded
+                    .iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<Vec<_>>()
+                    .join("")
+            );
             self.remote_write.write_all(&encoded).await?;
             self.addr_sent = true;
             total_up += combined.len() as u64;
@@ -260,34 +282,39 @@ impl ObfsRelay {
                 let n = tokio::time::timeout(
                     std::time::Duration::from_secs(10),
                     self.remote_read.read(&mut remote_buf),
-                ).await;
+                )
+                .await;
                 match n {
                     Ok(Ok(0)) => {
                         ssr_debug!("[relay] Server closed after address");
                     }
                     Ok(Ok(n)) => {
                         ssr_debug!("[relay] Server feedback: {} bytes", n);
-                    // Process server feedback (obfs decode, cipher decrypt, protocol post_decrypt)
-                    let (decrypted_obfs, _needs_feedback) = self.obfs.client_decode(&remote_buf[..n])?;
-                    if !decrypted_obfs.is_empty() {
-                        let decrypted_cipher = if let Some(ref mut dctx) = self.decrypt_ctx {
-                            self.cipher_env.decrypt_ctx(dctx, &decrypted_obfs)?
-                        } else {
-                            let (dctx, data) = self.cipher_env.create_decrypt_ctx_from_ciphertext(&decrypted_obfs)?;
-                            self.decrypt_ctx = Some(dctx);
-                            self.cipher_env.decrypt_ctx(self.decrypt_ctx.as_mut().unwrap(), &data)?
-                        };
-                        let decoded = self.protocol.client_post_decrypt(&decrypted_cipher)?;
-                        if !decoded.is_empty() {
-                            self.local_write.write_all(&decoded).await?;
+                        // Process server feedback (obfs decode, cipher decrypt, protocol post_decrypt)
+                        let (decrypted_obfs, _needs_feedback) =
+                            self.obfs.client_decode(&remote_buf[..n])?;
+                        if !decrypted_obfs.is_empty() {
+                            let decrypted_cipher = if let Some(ref mut dctx) = self.decrypt_ctx {
+                                self.cipher_env.decrypt_ctx(dctx, &decrypted_obfs)?
+                            } else {
+                                let (dctx, data) = self
+                                    .cipher_env
+                                    .create_decrypt_ctx_from_ciphertext(&decrypted_obfs)?;
+                                self.decrypt_ctx = Some(dctx);
+                                self.cipher_env
+                                    .decrypt_ctx(self.decrypt_ctx.as_mut().unwrap(), &data)?
+                            };
+                            let decoded = self.protocol.client_post_decrypt(&decrypted_cipher)?;
+                            if !decoded.is_empty() {
+                                self.local_write.write_all(&decoded).await?;
+                            }
                         }
+                        total_down += n as u64;
                     }
-                    total_down += n as u64;
+                    _ => {
+                        ssr_debug!("[relay] Server feedback timeout/error");
+                    }
                 }
-                _ => {
-                    ssr_debug!("[relay] Server feedback timeout/error");
-                }
-            }
             } // end if need_feedback
         }
 
@@ -412,9 +439,7 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
     // Step 1: Method negotiation
     let method_req = read_method_negotiation(&mut stream).await?;
     let selected = select_method(&method_req.methods)?;
-    stream
-        .write_all(&build_method_response(selected))
-        .await?;
+    stream.write_all(&build_method_response(selected)).await?;
 
     // Step 2: Connect request
     let connect_req = read_connect_request(&mut stream).await?;
@@ -472,14 +497,18 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
     }
 
     // Step 3: Establish tunnel to remote SSR server
-    ssr_debug!("[conn] CONNECT {}:{}", connect_req.addr.display(), connect_req.port);
+    ssr_debug!(
+        "[conn] CONNECT {}:{}",
+        connect_req.addr.display(),
+        connect_req.port
+    );
 
     let mut remote_stream = connect_to_ssr_server(config).await?;
     ssr_debug!("[conn] Connected to SSR server");
 
     // Create cipher and obfs instances
-    use crate::crypto::cipher_env::CipherEnv;
     use crate::crypto::aead::AeadCipher;
+    use crate::crypto::cipher_env::CipherEnv;
     use crate::crypto::types::CipherType;
     let env = CipherEnv::new(&config.password, &config.method)?;
     let method = CipherType::from_name(&config.method)?;
@@ -498,7 +527,10 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
         .ok_or_else(|| SsrError::Obfs(format!("Unsupported obfs: {}", config.obfs)))?
     };
     obfs_inst.set_key(env.key().to_vec());
-    ssr_debug!("[conn] Created obfs instance{}", if is_aead { " (AEAD→plain)" } else { "" });
+    ssr_debug!(
+        "[conn] Created obfs instance{}",
+        if is_aead { " (AEAD→plain)" } else { "" }
+    );
 
     // Step 4: Perform the obfs handshake, if this obfs uses one.
     // Plain / HTTP obfs carry their framing with the first data packet and send
@@ -530,7 +562,15 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
     let protocol = create_protocol(config, &env, is_aead)?;
 
     ssr_debug!("[conn] Starting obfs relay");
-    let relay = ObfsRelay::new(stream, remote_stream, obfs_inst, env, protocol, addr_pkg, config.idle_timeout)?;
+    let relay = ObfsRelay::new(
+        stream,
+        remote_stream,
+        obfs_inst,
+        env,
+        protocol,
+        addr_pkg,
+        config.idle_timeout,
+    )?;
     let (up, down) = relay.run().await?;
 
     ssr_debug!("[conn] Relay finished: upstream={up}, downstream={down}");
@@ -614,7 +654,9 @@ async fn read_method_negotiation(stream: &mut TcpStream) -> SsrResult<socks5::Me
         .map_err(|e| SsrError::Socks5(format!("Failed to read method negotiation: {e}")))?;
 
     if n == 0 {
-        return Err(SsrError::socks5("Client closed connection during handshake"));
+        return Err(SsrError::socks5(
+            "Client closed connection during handshake",
+        ));
     }
 
     parse_method_negotiation(&buf[..n])
@@ -633,7 +675,15 @@ async fn read_connect_request(stream: &mut TcpStream) -> SsrResult<socks5::Conne
         return Err(SsrError::socks5("Client closed connection during CONNECT"));
     }
 
-    ssr_debug!("[socks5] Raw CONNECT: {} bytes: {}", n, buf[..n].iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" "));
+    ssr_debug!(
+        "[socks5] Raw CONNECT: {} bytes: {}",
+        n,
+        buf[..n]
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
 
     parse_connect_request(&buf[..n])
 }
@@ -645,9 +695,7 @@ fn select_method(offered: &[u8]) -> SsrResult<u8> {
     if offered.contains(&AUTH_NONE) {
         Ok(AUTH_NONE)
     } else {
-        Err(SsrError::socks5(
-            "Client does not support NO AUTH method",
-        ))
+        Err(SsrError::socks5("Client does not support NO AUTH method"))
     }
 }
 
@@ -670,15 +718,13 @@ async fn perform_obfs_handshake(
 
     // Read server response with timeout
     let mut buf = vec![0u8; 8192];
-    let n = tokio::time::timeout(
-        Duration::from_secs(10),
-        remote.read(&mut buf),
-    )
-    .await
-    .map_err(|_| SsrError::Connection("Timeout reading server response".to_string()))?
-    ?;
+    let n = tokio::time::timeout(Duration::from_secs(10), remote.read(&mut buf))
+        .await
+        .map_err(|_| SsrError::Connection("Timeout reading server response".to_string()))??;
     if n == 0 {
-        return Err(SsrError::Connection("Server closed connection during handshake".to_string()));
+        return Err(SsrError::Connection(
+            "Server closed connection during handshake".to_string(),
+        ));
     }
     ssr_debug!("[obfs] Received server response: {} bytes", n);
 

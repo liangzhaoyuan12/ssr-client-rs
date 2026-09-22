@@ -1,4 +1,4 @@
-use bytes::{Bytes, BytesMut, Buf, BufMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 /// A simple buffer wrapper around BytesMut for SSR protocol operations
 #[derive(Debug, Clone)]

@@ -122,7 +122,6 @@ pub async fn relay_streams(
 
 #[cfg(test)]
 mod tests {
-    
 
     #[test]
     fn test_relay_buffer_size_default() {

@@ -1,6 +1,6 @@
+use super::Obfs;
 use crate::error::SsrResult;
 use crate::utils::hash::hmac_sha1;
-use super::Obfs;
 use rand::Rng;
 
 /// TLS 1.2 ticket auth obfuscation overhead (5 bytes: \x17\x03\x03 + 2 byte length)
@@ -86,7 +86,12 @@ pub struct Tls12TicketAuthObfs {
 }
 
 impl Tls12TicketAuthObfs {
-    pub fn new(server_host: String, _server_port: u16, extra_param: String, fastauth: bool) -> Self {
+    pub fn new(
+        server_host: String,
+        _server_port: u16,
+        extra_param: String,
+        fastauth: bool,
+    ) -> Self {
         // C's tls1.2_ticket never reads the port either (obfs hmac = host + client_id).
         let mut client_id = [0u8; 32];
         rand::thread_rng().fill(&mut client_id);
@@ -129,7 +134,10 @@ impl Tls12TicketAuthObfs {
         let host = if self.extra_param.is_empty() {
             &self.server_host
         } else {
-            self.extra_param.split(',').next().unwrap_or(&self.server_host)
+            self.extra_param
+                .split(',')
+                .next()
+                .unwrap_or(&self.server_host)
         };
         ext_buf.extend_from_slice(&build_sni(host));
 
@@ -144,13 +152,11 @@ impl Tls12TicketAuthObfs {
 
         // Signature algorithms + supported groups + ec_point_formats + renegotiation_info
         ext_buf.extend_from_slice(&[
-            0x00, 0x0d, 0x00, 0x16, 0x00, 0x14, 0x06, 0x01, 0x06, 0x03, 0x05, 0x01,
-            0x05, 0x03, 0x04, 0x01, 0x04, 0x03, 0x03, 0x01, 0x03, 0x03, 0x02, 0x01,
-            0x02, 0x03,
-            0x00, 0x05, 0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x12, 0x00, 0x00,
-            0x75, 0x50, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x02, 0x01, 0x00,
-            0x00, 0x0a, 0x00, 0x06, 0x00, 0x04, 0x00, 0x17, 0x00, 0x18,
+            0x00, 0x0d, 0x00, 0x16, 0x00, 0x14, 0x06, 0x01, 0x06, 0x03, 0x05, 0x01, 0x05, 0x03,
+            0x04, 0x01, 0x04, 0x03, 0x03, 0x01, 0x03, 0x03, 0x02, 0x01, 0x02, 0x03, 0x00, 0x05,
+            0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x12, 0x00, 0x00, 0x75, 0x50, 0x00,
+            0x00, 0x00, 0x0b, 0x00, 0x02, 0x01, 0x00, 0x00, 0x0a, 0x00, 0x06, 0x00, 0x04, 0x00,
+            0x17, 0x00, 0x18,
         ]);
 
         // Extensions length (2 bytes, big-endian)
@@ -161,10 +167,9 @@ impl Tls12TicketAuthObfs {
         // Cipher suites + compression methods (C code tls_data0, 32 bytes):
         //   cipher_suites_len(2) + 28 suite bytes + compression_len(1) + null(1)
         let cipher_suites: Vec<u8> = vec![
-            0x00, 0x1c, 0xc0, 0x2b, 0xc0, 0x2f, 0xcc, 0xa9, 0xcc, 0xa8,
-            0xcc, 0x14, 0xcc, 0x13, 0xc0, 0x0a, 0xc0, 0x14, 0xc0, 0x09,
-            0xc0, 0x13, 0x00, 0x9c, 0x00, 0x35, 0x00, 0x2f, 0x00, 0x0a,
-            0x01, 0x00,
+            0x00, 0x1c, 0xc0, 0x2b, 0xc0, 0x2f, 0xcc, 0xa9, 0xcc, 0xa8, 0xcc, 0x14, 0xcc, 0x13,
+            0xc0, 0x0a, 0xc0, 0x14, 0xc0, 0x09, 0xc0, 0x13, 0x00, 0x9c, 0x00, 0x35, 0x00, 0x2f,
+            0x00, 0x0a, 0x01, 0x00,
         ];
 
         // Build ClientHello body (before prepend headers)
@@ -203,15 +208,12 @@ impl Tls12TicketAuthObfs {
         result
     }
 
-
     fn build_handshake_finish(&mut self) -> Vec<u8> {
         let mut rng = rand::thread_rng();
         let finish_len: usize = 32; // Must match C code's finish_len_set
 
         // Handshake finish prefix — CCS record + start of Finished record
-        let handshake_finish: &[u8] = &[
-            0x14, 0x03, 0x03, 0x00, 0x01, 0x01, 0x16, 0x03, 0x03,
-        ];
+        let handshake_finish: &[u8] = &[0x14, 0x03, 0x03, 0x00, 0x01, 0x01, 0x16, 0x03, 0x03];
 
         let mut hmac_data = Vec::with_capacity(handshake_finish.len() + 2 + finish_len - 10 + 10);
         hmac_data.extend_from_slice(handshake_finish);
@@ -367,7 +369,8 @@ impl Obfs for Tls12TicketAuthObfs {
                     if self.recv_buffer[0] != 0x17 {
                         break;
                     }
-                    let size = u16::from_be_bytes([self.recv_buffer[3], self.recv_buffer[4]]) as usize;
+                    let size =
+                        u16::from_be_bytes([self.recv_buffer[3], self.recv_buffer[4]]) as usize;
                     if size + 5 > self.recv_buffer.len() {
                         break;
                     }
@@ -387,7 +390,8 @@ impl Obfs for Tls12TicketAuthObfs {
             if header_length >= iter.len() {
                 return Ok((buf.to_vec(), false));
             }
-            let rec_len = u16::from_be_bytes([iter[header_length - 2], iter[header_length - 1]]) as usize;
+            let rec_len =
+                u16::from_be_bytes([iter[header_length - 2], iter[header_length - 1]]) as usize;
             header_length += rec_len;
             if header_length > iter.len() {
                 return Ok((buf.to_vec(), false));
@@ -482,24 +486,15 @@ mod tests {
 
     #[test]
     fn test_tls_overhead() {
-        let obfs = Tls12TicketAuthObfs::new(
-            "example.com".to_string(),
-            443,
-            String::new(),
-            false,
-        );
+        let obfs = Tls12TicketAuthObfs::new("example.com".to_string(), 443, String::new(), false);
         assert_eq!(obfs.get_overhead(), 5);
         assert!(obfs.need_feedback());
     }
 
     #[test]
     fn test_build_client_hello() {
-        let mut obfs = Tls12TicketAuthObfs::new(
-            "example.com".to_string(),
-            443,
-            String::new(),
-            false,
-        );
+        let mut obfs =
+            Tls12TicketAuthObfs::new("example.com".to_string(), 443, String::new(), false);
         obfs.key = vec![0u8; 16];
         let client_hello = obfs.build_client_hello();
 
@@ -517,12 +512,8 @@ mod tests {
 
     #[test]
     fn test_build_handshake_finish() {
-        let mut obfs = Tls12TicketAuthObfs::new(
-            "example.com".to_string(),
-            443,
-            String::new(),
-            false,
-        );
+        let mut obfs =
+            Tls12TicketAuthObfs::new("example.com".to_string(), 443, String::new(), false);
         obfs.key = vec![0u8; 16];
         let finish = obfs.build_handshake_finish();
 
@@ -545,12 +536,8 @@ mod tests {
 
     #[test]
     fn test_tls_auth_encode_first_call() {
-        let mut obfs = Tls12TicketAuthObfs::new(
-            "example.com".to_string(),
-            443,
-            String::new(),
-            false,
-        );
+        let mut obfs =
+            Tls12TicketAuthObfs::new("example.com".to_string(), 443, String::new(), false);
         obfs.key = vec![0u8; 16];
 
         // First call with empty data should return ClientHello
@@ -562,12 +549,8 @@ mod tests {
 
     #[test]
     fn test_tls_auth_fastauth() {
-        let mut obfs = Tls12TicketAuthObfs::new(
-            "example.com".to_string(),
-            443,
-            String::new(),
-            true,
-        );
+        let mut obfs =
+            Tls12TicketAuthObfs::new("example.com".to_string(), 443, String::new(), true);
         obfs.key = vec![0u8; 16];
 
         // First call should return ClientHello + Finish
@@ -579,12 +562,8 @@ mod tests {
 
     #[test]
     fn test_tls_auth_encode_after_handshake() {
-        let mut obfs = Tls12TicketAuthObfs::new(
-            "example.com".to_string(),
-            443,
-            String::new(),
-            false,
-        );
+        let mut obfs =
+            Tls12TicketAuthObfs::new("example.com".to_string(), 443, String::new(), false);
         obfs.key = vec![0u8; 16];
         obfs.handshake_status = 0x04; // Handshake complete
 
@@ -598,12 +577,8 @@ mod tests {
 
     #[test]
     fn test_tls_auth_decode_after_handshake() {
-        let mut obfs = Tls12TicketAuthObfs::new(
-            "example.com".to_string(),
-            443,
-            String::new(),
-            false,
-        );
+        let mut obfs =
+            Tls12TicketAuthObfs::new("example.com".to_string(), 443, String::new(), false);
         obfs.handshake_status = 0x08; // Server validated
 
         // Create a TLS application data record

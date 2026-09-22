@@ -1,9 +1,9 @@
+use super::ss_hmac_key;
+use super::{get_s5_head_size, memintcopy_lt, GlobalData, Protocol, ServerInfo, XorShift128Plus};
 use crate::error::SsrResult;
 use crate::utils::adler32::fill_adler32;
 use crate::utils::crc32::crc32;
 use crate::utils::hash::hmac_sha1;
-use super::ss_hmac_key;
-use super::{Protocol, GlobalData, ServerInfo, get_s5_head_size, memintcopy_lt, XorShift128Plus};
 
 const PACK_UNIT_SIZE: usize = 2000;
 const HMAC_SHA1_LEN: usize = 10;
@@ -32,9 +32,13 @@ impl AuthSHA1V4 {
     }
 
     fn get_rand_len(&mut self, datalength: usize) -> usize {
-        if datalength > 1300 { 1 }
-        else if datalength > 400 { ((self.rng.next_u64() & 0x7F) + 1) as usize }
-        else { ((self.rng.next_u64() & 0x3FF) + 1) as usize }
+        if datalength > 1300 {
+            1
+        } else if datalength > 400 {
+            ((self.rng.next_u64() & 0x7F) + 1) as usize
+        } else {
+            ((self.rng.next_u64() & 0x3FF) + 1) as usize
+        }
     }
 
     fn pack_data(&mut self, data: &[u8]) -> Vec<u8> {
@@ -102,7 +106,10 @@ impl AuthSHA1V4 {
             .as_secs() as u32;
         memintcopy_lt(&mut out[data_offset..data_offset + 4], now);
         out[data_offset + 4..data_offset + 8].copy_from_slice(&self.global.local_client_id[..4]);
-        memintcopy_lt(&mut out[data_offset + 8..data_offset + 12], self.global.connection_id);
+        memintcopy_lt(
+            &mut out[data_offset + 8..data_offset + 12],
+            self.global.connection_id,
+        );
         // Data after auth
         out[data_offset + 12..data_offset + 12 + data.len()].copy_from_slice(data);
         // HMAC — pad key to match C's ss_sha1_hmac: [iv(16)][key(32)][zeros(32)]
@@ -115,8 +122,12 @@ impl AuthSHA1V4 {
 
 impl Protocol for AuthSHA1V4 {
     fn set_salt(&mut self, _salt: &str) {}
-    fn get_overhead(&self) -> usize { 0 }
-    fn need_feedback(&self) -> bool { true }
+    fn get_overhead(&self) -> usize {
+        0
+    }
+    fn need_feedback(&self) -> bool {
+        true
+    }
     fn set_server_iv(&mut self, iv: Vec<u8>) {
         self.server_info.iv = iv;
     }
@@ -180,7 +191,11 @@ impl Protocol for AuthSHA1V4 {
             // Extract data from pack_data format:
             // [length(2)][CRC(2)][rand_len(1|3)][zeros(rand_len)][data][adler32(4)]
             let pos = recv[4] as usize;
-            let data_start = if pos < 255 { pos + 4 } else { ((recv[5] as usize) << 8 | recv[6] as usize) + 4 };
+            let data_start = if pos < 255 {
+                pos + 4
+            } else {
+                ((recv[5] as usize) << 8 | recv[6] as usize) + 4
+            };
             let data_size = length.saturating_sub(data_start + 4); // -4 for adler32
             if data_size > 0 {
                 output.extend_from_slice(&recv[data_start..data_start + data_size]);

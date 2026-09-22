@@ -1,5 +1,5 @@
-use crate::error::SsrResult;
 use super::Obfs;
+use crate::error::SsrResult;
 
 /// Plain obfuscation — pass-through, no modification.
 pub struct PlainObfs;

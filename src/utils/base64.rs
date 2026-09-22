@@ -1,5 +1,5 @@
-use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 
 /// Base64 encode
 pub fn b64encode(data: &[u8]) -> String {

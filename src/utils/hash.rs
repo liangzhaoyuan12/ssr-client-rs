@@ -1,7 +1,7 @@
+use digest::Digest;
+use hmac::{Hmac, Mac};
 use md5::Md5;
 use sha1::Sha1;
-use hmac::{Hmac, Mac};
-use digest::Digest;
 
 type HmacMD5 = Hmac<Md5>;
 type HmacSHA1 = Hmac<Sha1>;
@@ -89,10 +89,7 @@ mod tests {
     #[test]
     fn test_md5() {
         let hash = md5(b"hello");
-        assert_eq!(
-            hex::encode(hash),
-            "5d41402abc4b2a76b9719d911017c592"
-        );
+        assert_eq!(hex::encode(hash), "5d41402abc4b2a76b9719d911017c592");
     }
 
     #[test]

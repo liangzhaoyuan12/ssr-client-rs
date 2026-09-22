@@ -9,9 +9,8 @@ use std::sync::OnceLock;
 /// Whether verbose wire-level logging is enabled.
 pub fn debug_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        matches!(std::env::var("SSR_DEBUG"), Ok(v) if !v.is_empty() && v != "0")
-    })
+    *ENABLED
+        .get_or_init(|| matches!(std::env::var("SSR_DEBUG"), Ok(v) if !v.is_empty() && v != "0"))
 }
 
 /// `eprintln!` that only fires when `SSR_DEBUG` is set.

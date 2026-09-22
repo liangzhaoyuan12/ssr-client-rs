@@ -194,7 +194,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
   - 完成标准: `cargo clippy --all-targets -- -D warnings` exit 0
   - 在 Cargo.toml 加 `[lints.rust] warnings = ...`（若 MSRV ≥1.74）固化规则
 
-- [ ] Q3 rustfmt 统一
+- [x] Q3 rustfmt 统一（238 处 diff → `cargo fmt --all -- --check` exit 0，38 文件纯格式）
   - `cargo fmt --all`，diff 里只允许纯格式变化
   - 完成标准: `cargo fmt --all -- --check` exit 0；fmt 后立即 `cargo test` 全绿
 
