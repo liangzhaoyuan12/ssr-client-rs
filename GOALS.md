@@ -44,15 +44,14 @@
 
 ---
 
-## 当前状态快照（截至 2026-09-21）
+## 当前状态快照（截至 2026-09-22）
 
 ### 测试情况
 
 - 单元测试: 122 passed, 0 failed
 - hk_integration: 15 passed, 0 failed
-- full_coverage: 41 passed, 5 failed (auth_sha1_v4 相关)
-- **总计: 178 passed, 5 failed**
-- 失败的 5 个测试全部是 auth_sha1_v4 的 roundtrip/pipeline 问题
+- full_coverage: 46 passed, 0 failed
+- **总计: 183 passed, 0 failed**
 
 ### 已实现（可工作的，经真实服务器验证）
 
@@ -83,9 +82,11 @@
 
 ### 已知 Bug
 
-1. **auth_sha1_v4 roundtrip 失败** — `client_post_decrypt` 产出截断数据，5 个测试失败
-2. **AEAD 端到端不通** — 模块测试通过，但服务端二进制的 obfs 实现与源码不一致，握手阶段断开
-3. **auth_chain_a 端到端不通** — 协议级 roundtrip 通过但端到端连接失败
+1. ~~auth_sha1_v4 roundtrip 失败~~ — 已修复 (commit 4138f7b)
+2. ~~auth_chain_a 端到端不通~~ — 已修复 (commit 68f89e4, 见 PROGRESS.md)
+3. AEAD 本地 e2e 已通过（aes-256-gcm + plain + origin → httpbin200）；
+   hk.json 生产服务器组合（AEAD + tls obfs）此前因服务端二进制 obfs 实现
+   与源码不一致而未互通——如需生产 AEAD 需重新验证
 
 ### 阻塞项
 
@@ -103,17 +104,18 @@ AEAD 端到端：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 实现与源�
 
 **任务**:
 
-- [ ] 0.1 修复 auth_sha1_v4 roundtrip bug
+- [x] 0.1 修复 auth_sha1_v4 roundtrip bug
   - 文件: `src/protocol/auth_sha1_v4.rs`
   - 现象: `client_post_decrypt` 产出截断数据
   - 参考: `src/protocol/auth_sha1.rs` 和 `src/protocol/auth_sha1_v2.rs`（同族协议，roundtrip 通过）
   - 对比 C 源码 `ssr-n/src/auth_aes128.c` 和 `ssr-n/src/auth_sha1_v4.c`
   - 验证: `cargo test test_proto_auth_sha1_v4` 通过
 
-- [ ] 0.2 运行完整测试套件确认无回归
+- [x] 0.2 运行完整测试套件确认无回归
   - `cargo test` — 全部 0 failures
   - `cargo test --test full_coverage` — 全部通过
   - `cargo test --test hk_integration` — 全部通过
+  - 附加: auth_chain_a e2e 已打通（见 PROGRESS.md, commit 68f89e4）
 
 ### Phase 1: 本地服务端集成测试（hk.json）
 
