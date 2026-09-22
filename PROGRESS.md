@@ -109,7 +109,7 @@
 - [x] T1 测试资产入库（见上）
 - [x] T2 边界与负面测试（见下"T2 记录"，net +47 用例）
 - [x] T3 proptest 属性测试（见下"T3 记录"）
-- [ ] T4 e2e 矩阵脚本（tools/matrix_test.py 已有雏形，需按 T4 组合策略补全）
+- [x] T4 e2e 矩阵脚本（见下"T4 记录"；8 例历史遗留 FAIL 待查）
 - [ ] T5 异常恢复 / T6 soak
 - [ ] Q1-Q10 代码质量（基线: 35 warning / 138 unwrap / 5 unsafe / 无 release profile）
 - [ ] R1-R6 运行占用（基线未测）
@@ -148,3 +148,24 @@
   6. UDP 数据报 build→parse 往返（任意 payload×port×三种地址类型）
 - AEAD 方法不入流测试（走 context API，encrypt/decrypt 路径按设计报错）
 - 验证: `cargo test` → **239 passed / 0 failed** (125+93+15+6)
+
+### ✅ T4 e2e 矩阵脚本 + 发现并修复 set_server_iv 分派 bug（2026-09-23）
+- 重写 `tools/matrix_test.py` 按 GOALS T4 组合策略:
+  三轴（cipher 21 实现 + 8 SKIP / protocol 14 / obfs 6）+ UDP 轴（委托
+  e2e_udp.sh），每例独立起停双端、结果写 `tests/e2e/RESULTS.md` +
+  `matrix_results.json`（含日期与服务端 sha256）
+- **修复脚本自身 2 个 bug**: ①目标 http.server PID 混入每例 kill 列表
+  （首个用例后全部 connection refused）→ 拆 _target_pid；②des-cfb 服务端
+  mbedTLS 不支持 → 归入 SKIP 表
+- **矩阵首跑暴露真实回归（重大发现）**: auth_aes128 系 + 全部 obfs 轴
+  失败；C 客户端同配置 404 成功 → 实锤我方 bug
+  - 根因: `AuthAES128::set_server_iv` 是 inherent 方法（2afd58f），
+    从未进 `impl Protocol` → `Box<dyn Protocol>` 动态分派走 trait 默认
+    no-op → server_info.iv 恒空 → HMAC key 缺 cipher IV 前缀 →
+    服务端 tunnel_stage_initial 拒包（SSR_DEBUG 抓到 `iv=` 空字节）
+  - 修复: 在 `impl Protocol for AuthAES128` 覆写 set_server_iv；
+    修后 `iv=f2bbf249…` 非空，同配置 404 与 C 客户端一致
+- **矩阵 27/51 → 35/51**; 剩余 8 FAIL（table/rc4-md5/rc4-md5-6/chacha20 +
+  verify_simple/auth_simple/auth_sha1/auth_sha1_v2）与 GOALS 旧记录
+  "cipher 9/28, protocol 2/4" 一致 = 历史遗留，记入 RESULTS.md 待查
+- `cargo test` 239 passed / 0 failed（无回归）

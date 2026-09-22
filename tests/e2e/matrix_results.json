@@ -1,0 +1,414 @@
+{
+  "client": "RUST",
+  "server_sha12": "d70342262c45",
+  "results": [
+    {
+      "axis": "cipher",
+      "method": "none",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "cipher",
+      "method": "table",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "ERR",
+      "detail": "ssr-server 2026/09/23 00:22 error  \u001b[31munexpect tunnel terminated. about _client_ \"(null)\": Unknown system er"
+    },
+    {
+      "axis": "cipher",
+      "method": "rc4",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "cipher",
+      "method": "rc4-md5",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "ERR",
+      "detail": "ssr-server 2026/09/23 00:22 error  \u001b[31munexpect tunnel terminated. about _client_ \"(null)\": Unknown system er"
+    },
+    {
+      "axis": "cipher",
+      "method": "rc4-md5-6",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "ERR",
+      "detail": "ssr-server 2026/09/23 00:22 error  \u001b[31munexpect tunnel terminated. about _client_ \"(null)\": Unknown system er"
+    },
+    {
+      "axis": "cipher",
+      "method": "aes-128-cfb",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "cipher",
+      "method": "aes-192-cfb",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "cipher",
+      "method": "aes-256-cfb",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "cipher",
+      "method": "aes-128-ctr",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "cipher",
+      "method": "aes-192-ctr",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "cipher",
+      "method": "aes-256-ctr",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "cipher",
+      "method": "bf-cfb",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "cipher",
+      "method": "salsa20",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "cipher",
+      "method": "chacha20",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "ERR",
+      "detail": "ssr-server 2026/09/23 00:22 error  \u001b[31munexpect tunnel terminated. about _client_ \"(null)\": Unknown system er"
+    },
+    {
+      "axis": "cipher",
+      "method": "chacha20-ietf",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "cipher",
+      "method": "aes-128-gcm",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "cipher",
+      "method": "aes-192-gcm",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "cipher",
+      "method": "aes-256-gcm",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "cipher",
+      "method": "chacha20-ietf-poly1305",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "cipher",
+      "method": "xchacha20-ietf-poly1305",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "cipher",
+      "method": "camellia-128-cfb",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "SKIP",
+      "detail": "SKIP: client not implemented (server supports)"
+    },
+    {
+      "axis": "cipher",
+      "method": "camellia-192-cfb",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "SKIP",
+      "detail": "SKIP: client not implemented (server supports)"
+    },
+    {
+      "axis": "cipher",
+      "method": "camellia-256-cfb",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "SKIP",
+      "detail": "SKIP: client not implemented (server supports)"
+    },
+    {
+      "axis": "cipher",
+      "method": "cast5-cfb",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "SKIP",
+      "detail": "SKIP: server itself does not support (C client fails too)"
+    },
+    {
+      "axis": "cipher",
+      "method": "idea-cfb",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "SKIP",
+      "detail": "SKIP: server itself does not support (C client fails too)"
+    },
+    {
+      "axis": "cipher",
+      "method": "rc2-cfb",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "SKIP",
+      "detail": "SKIP: server itself does not support (C client fails too)"
+    },
+    {
+      "axis": "cipher",
+      "method": "seed-cfb",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "SKIP",
+      "detail": "SKIP: server itself does not support (C client fails too)"
+    },
+    {
+      "axis": "cipher",
+      "method": "des-cfb",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "SKIP",
+      "detail": "SKIP: server mbedTLS does not support des-cfb"
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "verify_simple",
+      "obfs": "plain",
+      "http": "ERR",
+      "detail": ""
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "auth_simple",
+      "obfs": "plain",
+      "http": "ERR",
+      "detail": ""
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "auth_sha1",
+      "obfs": "plain",
+      "http": "ERR",
+      "detail": "ssr-server 2026/09/23 00:22 error  \u001b[31munexpect tunnel terminated. about _client_ \"(null)\": Unknown system er"
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "auth_sha1_v2",
+      "obfs": "plain",
+      "http": "ERR",
+      "detail": "ssr-server 2026/09/23 00:22 error  \u001b[31munexpect tunnel terminated. about _client_ \"(null)\": Unknown system er"
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "auth_sha1_v4",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "auth_aes128_md5",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "auth_aes128_sha1",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "auth_chain_a",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "auth_chain_b",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "auth_chain_c",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "auth_chain_d",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "auth_chain_e",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-128-cfb",
+      "protocol": "auth_chain_f",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "obfs",
+      "method": "aes-256-cfb",
+      "protocol": "auth_aes128_sha1",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "obfs",
+      "method": "aes-256-cfb",
+      "protocol": "auth_aes128_sha1",
+      "obfs": "http_simple",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "obfs",
+      "method": "aes-256-cfb",
+      "protocol": "auth_aes128_sha1",
+      "obfs": "http_post",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "obfs",
+      "method": "aes-256-cfb",
+      "protocol": "auth_aes128_sha1",
+      "obfs": "http_mix",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "obfs",
+      "method": "aes-256-cfb",
+      "protocol": "auth_aes128_sha1",
+      "obfs": "tls1.2_ticket_auth",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "obfs",
+      "method": "aes-256-cfb",
+      "protocol": "auth_aes128_sha1",
+      "obfs": "tls1.2_ticket_fastauth",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "udp",
+      "method": "aes-256-cfb+auth_chain_a",
+      "protocol": "",
+      "obfs": "",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "udp",
+      "method": "aes-256-cfb+auth_aes128_sha1",
+      "protocol": "",
+      "obfs": "",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "udp",
+      "method": "aes-128-gcm+origin (AEAD)",
+      "protocol": "",
+      "obfs": "",
+      "http": "200",
+      "detail": ""
+    }
+  ]
+}

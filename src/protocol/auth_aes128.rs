@@ -312,6 +312,16 @@ impl Protocol for AuthAES128 {
     fn get_overhead(&self) -> usize { 9 }
     fn need_feedback(&self) -> bool { true }
 
+    /// MUST override the trait: `ObfsRelay::new` calls this through
+    /// `Box<dyn Protocol>`, which silently resolved to the default no-op while
+    /// the real setter was an inherent method (never reached). Empty iv made
+    /// every auth_aes128 HMAC key wrong -> server dropped at tunnel_stage_initial.
+    /// The server derives the MAC key from the received cipher IV
+    /// (C ssr_executive.c:400, auth.c:1094).
+    fn set_server_iv(&mut self, iv: Vec<u8>) {
+        self.server_info.iv = iv;
+    }
+
     fn client_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
         let mut result = Vec::new();
         let mut data = plaindata;
