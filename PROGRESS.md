@@ -319,3 +319,19 @@
 - **完成标准双达标**: 脚本 **exit 0**；`cargo test` **237/0**
 - **回归全绿**: fmt --check 0、clippy -D warnings rc=0、release 0 warning、
   矩阵 39/51+12SKIP 0 FAIL、UDP e2e ALL_PASS、resilience 4/4
+
+### ✅ Q5 unsafe 审计（2026-09-23）
+
+- **5 处全部删除**（`grep -rn 'unsafe ' src` = 0，GOALS 完成标准第一条即达）
+- 对象: `auth_chain.rs` 的 `unsafe impl Send for AuthChain{A..E}` ×5
+- **判定依据（能删则删）**:
+  1. 原 SAFETY 注释声称"contain raw pointers (for C FFI compatibility)"——
+     **与代码不符**: `grep -rn '\*const\|\*mut' auth_chain.rs` = 0，五个 struct
+     只含 GlobalData/ServerInfo/Context（全是普通所有权字段）
+  2. 实测删除后 `cargo build` 0 error——类型本就自动实现 Send，
+     unsafe impl 纯属冗余（历史遗留的防御性写法）
+  3. `cargo test --no-run`（含 tokio::spawn 的 Send 检查路径）0 error，
+     clippy -D rc=0——没有编译器层面依赖这些 impl 的地方
+- **无保留条目**: 0 处 unsafe → 0 条 SAFETY 注释需要
+- **回归全绿**: build/test 237-0、fmt 0、panic 脚本 rc=0、release 0 warning、
+  矩阵 39/51+12SKIP 0 FAIL、UDP e2e ALL_PASS、resilience 4/4
