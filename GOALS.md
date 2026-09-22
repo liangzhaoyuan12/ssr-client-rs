@@ -247,7 +247,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
 
 **任务**:
 
-- [ ] R1 基线测量脚本（先测后改，数字进 PROGRESS.md）
+- [x] R1 基线测量脚本（resource_probe.sh --idle 全 PASS，数字进 PROGRESS.md，2026-09-23）
   - `tools/resource_probe.sh`: 启动 hk.json 客户端，采样 `/proc/<pid>/{status,fd}` + `ps -o nlwp`
   - 记录: 空闲 RSS、线程数、fd 数、`top -b -n2` 空闲 CPU
   - 目标: **空闲 RSS ≤ 20MB、线程数 ≤ CPU核数+4、空闲 CPU = 0%、fd = 基线（3 TCP/UDP 相关 + stdio）**

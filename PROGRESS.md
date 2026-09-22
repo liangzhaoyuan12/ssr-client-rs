@@ -482,3 +482,23 @@ release 1,184,520 字节（移除依赖后 −44 字节）
   打包产物独立重编译通过（`--list` 4173 行含 LICENSE/CHANGELOG/README）
 - **门禁**: build 0/0、clippy -D rc=0、fmt 0、panic 脚本 rc=0、cargo doc 0、
   cargo test 237/0（元数据阶段无代码变更，Q9 的矩阵 39/51 0 FAIL 结果仍有效）
+
+### ✅ R1 基线测量（2026-09-23，Phase R 开工，先测后改）
+
+**脚本**: `tools/resource_probe.sh --idle [-c cfg] [-w warmup] [-m measure]`
+（T6 期间所建，R1 复用；单发模式供 soak 循环调用）
+
+**Phase R 正式基线**（Q10 后的 release 构建，hk.json，nproc=4）:
+
+| 指标 | 实测 | 目标 | 结果 |
+|---|---|---|---|
+| 空闲 RSS | **3488 KB**（3.4MB） | ≤ 20480 KB | **PASS**（占预算 17%） |
+| 线程数 | **5** | ≤ nproc+4 = 8 | **PASS** |
+| 空闲 CPU | **0.00%** | ≤ 0.5%（=0） | **PASS** |
+| fd 总数 | **11** | 基线（供 R2/R6 对比） | 记录 |
+
+- 命令输出: `idle_rss_kb=3488 (<=20480) PASS / threads=5 (<=8) PASS /
+  idle_cpu_pct=0.00 PASS / fd=11`，`probe_rc=0`
+- 与 T6 期基线（3616KB）同量级，Q6 LTO+strip 后略降 128KB
+- **R3 目标随之锚定**: 600s 负载增长 ≤10MB（T6 已实测 +784KB，见上）
+- 该基线为 R2 fd 泄漏、R6 回收完整性的对比基准（fd=11、RSS=3488KB）
