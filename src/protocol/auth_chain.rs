@@ -61,6 +61,108 @@ impl Shift128plusCtx {
 
 // ==================== Auth Chain A ====================
 
+/// Variant-specific state for the rand_len callback (C: subclass_context
+/// plus server_info.overhead which the b/c/d/e/f variants read).
+struct RandLenCtx {
+    overhead: u16,
+    b: Option<AuthChainBContext>,
+    c: Option<AuthChainCContext>,
+}
+
+/// C: local->get_tcp_rand_len. Each variant callback reinitialises the random
+/// context from (last_hash, datalength) itself — after its own datalength
+/// guard, matching C — so the subsequent get_rand_start_pos continues that
+/// same stream; otherwise the server reads the payload from a different offset.
+type RandLenFn = fn(&mut Shift128plusCtx, &[u8; 16], &RandLenCtx, usize) -> usize;
+
+/// C: auth_chain_find_pos — lower_bound, first element >= key.
+/// (Rust's binary_search returns an arbitrary match on duplicates.)
+fn find_pos(arr: &[i32], key: i32) -> usize {
+    let mut low = 0usize;
+    let mut high = arr.len() - 1;
+    if key > arr[high] {
+        return arr.len();
+    }
+    while low < high {
+        let middle = (low + high) / 2;
+        if key > arr[middle] {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    low
+}
+
+/// C: auth_chain_a_get_rand_len (auth_chain.c:300-316)
+fn rand_len_a(
+    random: &mut Shift128plusCtx,
+    last_hash: &[u8; 16],
+    _ctx: &RandLenCtx,
+    datalength: usize,
+) -> usize {
+    if datalength > 1440 {
+        return 0;
+    }
+    *random = Shift128plusCtx::from_bin_datalen(last_hash, datalength);
+    if datalength > 1300 {
+        return (random.next() % 31) as usize;
+    }
+    if datalength > 900 {
+        return (random.next() % 127) as usize;
+    }
+    if datalength > 400 {
+        return (random.next() % 521) as usize;
+    }
+    (random.next() % 1021) as usize
+}
+
+/// C: auth_chain_b_get_rand_len (auth_chain.c:1162-1202). Uses the
+/// data_size_list/data_size_list2 tables from subclass_context (rand_len_ctx.b)
+/// and server_info->overhead (rand_len_ctx.overhead).
+fn rand_len_b(
+    random: &mut Shift128plusCtx,
+    last_hash: &[u8; 16],
+    ctx: &RandLenCtx,
+    datalength: usize,
+) -> usize {
+    if datalength >= 1440 {
+        return 0;
+    }
+    *random = Shift128plusCtx::from_bin_datalen(last_hash, datalength);
+    let b = ctx
+        .b
+        .as_ref()
+        .expect("auth_chain_b: missing data_size_list context");
+    let overhead = ctx.overhead as usize;
+
+    let pos = find_pos(&b.data_size_list, (datalength + overhead) as i32);
+    let final_pos = pos + (random.next() as usize) % b.data_size_list.len();
+    if final_pos < b.data_size_list.len() {
+        return (b.data_size_list[final_pos] as usize).saturating_sub(datalength + overhead);
+    }
+
+    let pos2 = find_pos(&b.data_size_list2, (datalength + overhead) as i32);
+    let final_pos2 = pos2 + (random.next() as usize) % b.data_size_list2.len();
+    if final_pos2 < b.data_size_list2.len() {
+        return (b.data_size_list2[final_pos2] as usize).saturating_sub(datalength + overhead);
+    }
+    if final_pos2 < pos2 + b.data_size_list2.len() - 1 {
+        return 0;
+    }
+
+    if datalength > 1300 {
+        return (random.next() % 31) as usize;
+    }
+    if datalength > 900 {
+        return (random.next() % 127) as usize;
+    }
+    if datalength > 400 {
+        return (random.next() % 521) as usize;
+    }
+    (random.next() % 1021) as usize
+}
+
 struct AuthChainAContext {
     obfs: Option<*mut AuthChainA>, // back-reference
     has_sent_header: bool,
@@ -85,6 +187,10 @@ struct AuthChainAContext {
     client_over_head: u16,
     tcp_mss: u16,
     salt: &'static str,
+    /// C: local->get_tcp_rand_len — variant dispatch (A by default)
+    rand_len_fn: RandLenFn,
+    /// C: local->subclass_context + overhead for the callback
+    rand_len_ctx: RandLenCtx,
 }
 
 pub struct AuthChainA {
@@ -122,6 +228,8 @@ impl AuthChainA {
             client_over_head: 0,
             tcp_mss: 1460,
             salt,
+            rand_len_fn: rand_len_a,
+            rand_len_ctx: RandLenCtx { overhead: server_info.overhead, b: None, c: None },
         };
         local.random_client.next();
         local.random_server.next();
@@ -135,46 +243,33 @@ impl AuthChainA {
         ctx
     }
 
-    /// C: get_client_rand_len — reinit random_client from last_client_hash,
-    /// then continue that stream for the branch draw. pack_client_data's
-    /// get_rand_start_pos must continue the SAME reinit stream, or the server
-    /// will read the payload from a different offset.
+    /// C: get_client_rand_len — dispatch to the variant callback with
+    /// random_client + last_client_hash. The callback reinitialises the PRNG
+    /// (after its own datalength guard, like C) so that pack_client_data's
+    /// subsequent get_rand_start_pos continues the SAME stream — otherwise the
+    /// server reads the payload from a different offset.
     fn get_rand_len(local: &mut AuthChainAContext, datalength: usize) -> usize {
-        if datalength > 1440 {
-            return 0;
-        }
-        let hash = local.last_client_hash;
-        local.random_client = Shift128plusCtx::from_bin_datalen(&hash, datalength);
-        if datalength > 1300 {
-            return (local.random_client.next() % 31) as usize;
-        }
-        if datalength > 900 {
-            return (local.random_client.next() % 127) as usize;
-        }
-        if datalength > 400 {
-            return (local.random_client.next() % 521) as usize;
-        }
-        (local.random_client.next() % 1021) as usize
+        let f = local.rand_len_fn;
+        let AuthChainAContext {
+            random_client,
+            last_client_hash,
+            rand_len_ctx,
+            ..
+        } = local;
+        f(random_client, last_client_hash, rand_len_ctx, datalength)
     }
 
-    /// C: get_server_rand_len — reinit random_server from last_server_hash;
-    /// used when parsing data packets sent BY the server.
+    /// C: get_server_rand_len — same dispatch for parsing packets sent BY the
+    /// server (random_server + last_server_hash).
     fn get_server_rand_len(local: &mut AuthChainAContext, datalength: usize) -> usize {
-        if datalength > 1440 {
-            return 0;
-        }
-        let hash = local.last_server_hash;
-        local.random_server = Shift128plusCtx::from_bin_datalen(&hash, datalength);
-        if datalength > 1300 {
-            return (local.random_server.next() % 31) as usize;
-        }
-        if datalength > 900 {
-            return (local.random_server.next() % 127) as usize;
-        }
-        if datalength > 400 {
-            return (local.random_server.next() % 521) as usize;
-        }
-        (local.random_server.next() % 1021) as usize
+        let f = local.rand_len_fn;
+        let AuthChainAContext {
+            random_server,
+            last_server_hash,
+            rand_len_ctx,
+            ..
+        } = local;
+        f(random_server, last_server_hash, rand_len_ctx, datalength)
     }
 
     fn get_rand_start_pos(rand_len: usize, random: &mut Shift128plusCtx) -> usize {
@@ -516,16 +611,20 @@ struct AuthChainBContext {
 
 pub struct AuthChainB {
     inner: AuthChainA,
-    b_ctx: AuthChainBContext,
 }
 
 impl AuthChainB {
     pub fn new(server_info: ServerInfo) -> Self {
+        // C: auth_chain_b_new_obfs = auth_chain_a_new_obfs() + swap
+        // get_tcp_rand_len/salt + subclass_context; pre/post encrypt are the
+        // GENERIC auth_chain_a ones (only the rand_len callback differs).
         let mut inner = AuthChainA::new(server_info.clone(), "auth_chain_b");
-        let b_ctx = Self::init_data_size(&server_info.key);
-        Self { inner, b_ctx }
+        inner.local.rand_len_fn = rand_len_b;
+        inner.local.rand_len_ctx.b = Some(Self::init_data_size(&server_info.key));
+        Self { inner }
     }
 
+    /// C: auth_chain_b_init_data_size (auth_chain.c:1121-1155)
     fn init_data_size(key: &[u8]) -> AuthChainBContext {
         let mut random = Shift128plusCtx::from_bin(key);
         let list_len = (random.next() % 8 + 4) as usize;
@@ -545,42 +644,6 @@ impl AuthChainB {
             data_size_list2,
         }
     }
-
-    fn find_pos(arr: &[i32], key: i32) -> usize {
-        match arr.binary_search(&key) {
-            Ok(i) => i,
-            Err(i) => i,
-        }
-    }
-
-    fn get_rand_len(local: &mut AuthChainAContext, b_ctx: &AuthChainBContext, datalength: usize) -> usize {
-        if datalength >= 1440 {
-            return 0;
-        }
-
-        let overhead = local.client_over_head as usize;
-        let mut rng = Shift128plusCtx::from_bin_datalen(&local.last_client_hash, datalength);
-
-        let pos = Self::find_pos(&b_ctx.data_size_list, (datalength + overhead) as i32);
-        let final_pos = pos + (rng.next() as usize) % b_ctx.data_size_list.len();
-        if final_pos < b_ctx.data_size_list.len() {
-            return (b_ctx.data_size_list[final_pos] as usize).saturating_sub(datalength + overhead);
-        }
-
-        let pos2 = Self::find_pos(&b_ctx.data_size_list2, (datalength + overhead) as i32);
-        let final_pos2 = pos2 + (rng.next() as usize) % b_ctx.data_size_list2.len();
-        if final_pos2 < b_ctx.data_size_list2.len() {
-            return (b_ctx.data_size_list2[final_pos2] as usize).saturating_sub(datalength + overhead);
-        }
-        if final_pos2 < pos2 + b_ctx.data_size_list2.len() - 1 {
-            return 0;
-        }
-
-        if datalength > 1300 { return (rng.next() % 31) as usize; }
-        if datalength > 900 { return (rng.next() % 127) as usize; }
-        if datalength > 400 { return (rng.next() % 521) as usize; }
-        (rng.next() % 1021) as usize
-    }
 }
 
 impl Protocol for AuthChainB {
@@ -590,61 +653,9 @@ impl Protocol for AuthChainB {
     fn set_server_iv(&mut self, iv: Vec<u8>) { self.inner.set_server_iv(iv); }
 
     fn client_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
-        self.inner.init_user_key();
-        // Use B-specific rand_len logic
-        let mut result = Vec::new();
-        let mut data = plaindata;
-        let mut len = plaindata.len();
-
-        if len > 0 && !self.inner.local.has_sent_header {
-            let head_size = 1200.min(len);
-            let packed = self.inner.pack_auth_data(&data[..head_size]);
-            result.extend_from_slice(&packed);
-            data = &data[head_size..];
-            len -= head_size;
-            self.inner.local.has_sent_header = true;
-        }
-
-        let unit_size = self.inner.local.tcp_mss as usize - self.inner.local.client_over_head as usize;
-        while len > unit_size {
-            // Use B-specific pack
-            let rand_len = Self::get_rand_len(&mut self.inner.local, &self.b_ctx, unit_size);
-            let out_size = rand_len + unit_size + 2 + 2;
-            let mut out = vec![0u8; out_size];
-            let datalen = unit_size as u16;
-            out[0] = (datalen ^ self.inner.local.last_client_hash[14] as u16) as u8;
-            out[1] = ((datalen >> 8) ^ self.inner.local.last_client_hash[15] as u16) as u8;
-
-            use rand::RngCore;
-            rand::thread_rng().fill_bytes(&mut out[2..2 + rand_len]);
-            let start_pos = AuthChainA::get_rand_start_pos(rand_len, &mut self.inner.local.random_client);
-            let encrypted = self.inner.encrypt_buffer(&data[..unit_size]);
-            // Rebuild with correct positions
-            let mut out2 = vec![0u8; out_size];
-            out2[0] = out[0];
-            out2[1] = out[1];
-            rand::thread_rng().fill_bytes(&mut out2[2..2 + start_pos]);
-            out2[2 + start_pos..2 + start_pos + unit_size].copy_from_slice(&encrypted);
-            rand::thread_rng().fill_bytes(&mut out2[2 + start_pos + unit_size..out_size - 2]);
-
-            let mut key = self.inner.local.user_key.clone();
-            key.extend_from_slice(&self.inner.local.pack_id.to_le_bytes());
-            self.inner.local.pack_id += 1;
-            let hash = hmac_md5(&key, &out2[..out_size - 2]);
-            out2[out_size - 2..].copy_from_slice(&hash[..2]);
-            self.inner.local.last_client_hash = hash;
-
-            result.extend_from_slice(&out2);
-            data = &data[unit_size..];
-            len -= unit_size;
-        }
-        if len > 0 {
-            let packed = self.inner.pack_client_data(data);
-            result.extend_from_slice(&packed);
-        }
-
-        self.inner.local.last_data_len = plaindata.len();
-        Ok(result)
+        // Generic C path: auth_chain_a_client_pre_encrypt with the b variant's
+        // get_tcp_rand_len callback installed in new().
+        self.inner.client_pre_encrypt(plaindata)
     }
 
     fn client_post_decrypt(&mut self, data: &[u8]) -> SsrResult<Vec<u8>> {
