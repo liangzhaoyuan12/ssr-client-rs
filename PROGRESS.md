@@ -562,3 +562,30 @@ after: leftover_proc=no listeners_1080=0   → R6_STOP_CLEAN
 - 连接中断/超时路径的释放由 T5 用例覆盖（kill -9 恢复、idle 回收、
   半关闭 FIN 传播，4/4 绿）
 - 附带验证 Q8 修复生效: ctrl-c 等待失败会打印而非静默（此处无失败）
+
+### ✅ R4 热路径分配审计（2026-09-23）
+
+**grep 分诊**（`to_vec()` 75 处 + `.clone()` 9 处 in src/{crypto,relay,protocol}）:
+
+| 类别 | 位置 | 判定 |
+|---|---|---|
+| 每连接一次（非热） | `local/mod.rs:197-198` local_buf/remote_buf（8KB，循环外一次）、`relay/mod.rs:57,75` 上下行 buf | ✅ 已复用，无 per-packet 大 Vec |
+| 每包 1 次（结构性） | `stream.rs`/`cipher_env.rs` 的 `plaintext.to_vec()`（encrypt/decrypt 返回 `Vec<u8>`） | 保留：与 C `ss_encrypt_all/ss_decrypt_all` 的 calloc 语义一致；消除需改 API 为 `encrypt_into(&mut Vec)` —— P3 数据驱动决策 |
+| 每连接冷路径 | `user_key.clone()`/`server_info.clone()`（init 一次）、`data_size_list` 构造（一次）、`iv_cache.insert(iv.to_vec())`（每 IV 一次） | ✅ 不在热路径 |
+| 每包小分配 | `auth_aes128` md5/sha1/hmac 的 `.to_vec()`（16-20B） | 记录为 P3 候选（C 侧同样 malloc） |
+
+**分配次数对比数据（计数插桩，GOALS 验收项）** — 新增 `tests/alloc_count.rs`
+（`#[global_allocator]` 计数器包 System，单 test fn 防并发污染）:
+```
+R4 alloc baseline (64KB, aes-256-cfb, 200 iters):
+  one-shot encrypt+decrypt: 4 allocs/roundtrip (196640 B avg)
+  stateful encrypt+decrypt: 2 allocs/roundtrip
+```
+- 4 ≈ 输入拷贝 + 密文输出 + IV前缀 + 解密输出（每次 64KB 级别分配）
+- 断言上限 ≤16 作为回归护栏（P3 优化后必须下降且 e2e 字节不变）
+- **BytesMut 评估**: `utils/buffer.rs` 的 `SsrBuffer`（BytesMut 封装）
+  全库 **0 引用**（仅定义文件自见）——预分配方案实际未接入；
+  现行热路径已用固定 8KB 缓冲复用，R3 达标证明无 per-packet 大分配问题，
+  接入 BytesMut 留给 P3 按数据决定（避免无数据的盲改）
+
+**R3 验收数据**: 见 R3 记录（10 分钟 64KB 传输 soak SOAK_PASS）

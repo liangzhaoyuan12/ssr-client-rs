@@ -261,7 +261,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
   - 10 分钟持续 64KB 分块传输，每 30s 采样 RSS；warmup 后线性增长斜率 ≈ 0（总增长 ≤ 10MB）
   - 若增长: 用 `heaptrack`（若可用）或二分法定位（优先怀疑: 会话表、buffer 累积、日志缓冲）
 
-- [ ] R4 热路径分配审计（与 P3 协同，这里只管"少分配"）
+- [x] R4 热路径分配审计（75 to_vec + 9 clone 分诊完毕；alloc_count.rs 插桩：one-shot 4 / stateful 2 allocs 每 64KB 往返；BytesMut=SsrBuffer 0 引用留 P3，2026-09-23）
   - `grep -rn 'to_vec()\|\.clone()' src/crypto src/relay src/protocol` 逐处判断是否可避免
   - 读写 buffer 复用: 评估 `BytesMut` 预分配（依赖已有 `bytes`）；per-connection buffer 不要每包新建大 Vec
   - 验收: R3 达标 + 分配次数对比数据（如用 criterion 的 `iter_batched` 或计数插桩）
