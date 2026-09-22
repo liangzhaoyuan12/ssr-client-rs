@@ -27,14 +27,25 @@
   - example.com → HTML
 - 所有183 测试通过
 
-### 下一阶段已知问题（auth_chain_c-f 按 B 的套路做）
-1. C/D/E/F 构造时未设 `rand_len_fn`/`rand_len_ctx` → 仍走 A 回调（分发机制
-   已就绪，只需 new() 里安装 + 把各自 data_size_list 初始化挪进 ctx.c）
-2. C/D/E/F 的自定义 `client_pre_encrypt` 覆盖应删除、委托 inner（同 B 已做）
-3. C/D/E/F 的 data_size_list 初始化/分支逻辑尚未逐行对照 C
-   （C: auth_chain_c_get_rand_len line1218+, D/E/F 各自版本）
-4. E 的 `get_rand_len` 有已知 unused rng warning（line873, 改造时一并处理）
+### ✅ auth_chain_c 端到端 (commit 619219d)
+- `rand_len_c` 按 C auth_chain.c:1270-1297 移植: **无条件 reinit PRNG**（C 注释
+  "must init random in here to make sure output sync"，与 A/B 的守卫前 reinit 不同）
+- AuthChainC::new 装回调 + 删自定义2000分块循环（委托 inner 通用路径）
+- init_data_size 与 C 对照确认 (list_len = next()%24+12)
+- 删除 C/D/E 从未被调用的旧 associated get_rand_len/find_pos 死代码
+- **E2e 已验证**（端口18391/19905）: httpbin JSON 200 / bytes/102400 code=200
+  （下行1456 分块多帧 + 跨读拼包正常）
+
+### 下一阶段已知问题（auth_chain_d-f 按 B/C 的套路做）
+1. D/E/F 的 new() 需装 `rand_len_fn` + 把 data_size_list 初始化挪进 `rand_len_ctx.c`
+   （D/E 的 struct 仍有独立 c_ctx 字段，F 需要新写）
+2. D/E/F 的自定义 `client_pre_encrypt` 覆盖删除、委托 inner（同 B/C 已做）
+3. 逐行对照 C 的回调:
+   - D: auth_chain_d_get_rand_len + check_and_patch (last>=1300, max64)
+   - E: auth_chain_e_get_rand_len（find_pos 取最小值分支）
+   - F: auth_chain_f_get_rand_len + 时间换 key 的 init (key_change_interval)
+4. F 的 init_data_size 现实现含 `#N#` 时间参数解析，需对照 C 校验
 
 ### 未开始
-- auth_chain_c-f
+- auth_chain_d-f
 - UDP relay
