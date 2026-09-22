@@ -64,7 +64,6 @@ impl Shift128plusCtx {
 struct AuthChainAContext {
     obfs: Option<*mut AuthChainA>, // back-reference
     has_sent_header: bool,
-    has_recv_header: bool,
     recv_buffer: Vec<u8>,
     recv_id: u32,
     pack_id: u32,
@@ -102,7 +101,6 @@ impl AuthChainA {
         let mut local = AuthChainAContext {
             obfs: None,
             has_sent_header: false,
-            has_recv_header: false,
             recv_buffer: Vec::with_capacity(SSR_BUFF_SIZE * 2),
             recv_id: 1,
             pack_id: 1,
@@ -137,38 +135,46 @@ impl AuthChainA {
         ctx
     }
 
+    /// C: get_client_rand_len — reinit random_client from last_client_hash,
+    /// then continue that stream for the branch draw. pack_client_data's
+    /// get_rand_start_pos must continue the SAME reinit stream, or the server
+    /// will read the payload from a different offset.
     fn get_rand_len(local: &mut AuthChainAContext, datalength: usize) -> usize {
         if datalength > 1440 {
             return 0;
         }
-        let mut rng = Shift128plusCtx::from_bin_datalen(&local.last_client_hash, datalength);
+        let hash = local.last_client_hash;
+        local.random_client = Shift128plusCtx::from_bin_datalen(&hash, datalength);
         if datalength > 1300 {
-            return (rng.next() % 31) as usize;
+            return (local.random_client.next() % 31) as usize;
         }
         if datalength > 900 {
-            return (rng.next() % 127) as usize;
+            return (local.random_client.next() % 127) as usize;
         }
         if datalength > 400 {
-            return (rng.next() % 521) as usize;
+            return (local.random_client.next() % 521) as usize;
         }
-        (rng.next() % 1021) as usize
+        (local.random_client.next() % 1021) as usize
     }
 
-    fn get_client_rand_len(local: &mut AuthChainAContext, datalength: usize) -> usize {
+    /// C: get_server_rand_len — reinit random_server from last_server_hash;
+    /// used when parsing data packets sent BY the server.
+    fn get_server_rand_len(local: &mut AuthChainAContext, datalength: usize) -> usize {
         if datalength > 1440 {
             return 0;
         }
-        let mut rng = Shift128plusCtx::from_bin_datalen(&local.last_server_hash, datalength);
+        let hash = local.last_server_hash;
+        local.random_server = Shift128plusCtx::from_bin_datalen(&hash, datalength);
         if datalength > 1300 {
-            return (rng.next() % 31) as usize;
+            return (local.random_server.next() % 31) as usize;
         }
         if datalength > 900 {
-            return (rng.next() % 127) as usize;
+            return (local.random_server.next() % 127) as usize;
         }
         if datalength > 400 {
-            return (rng.next() % 521) as usize;
+            return (local.random_server.next() % 521) as usize;
         }
-        (rng.next() % 1021) as usize
+        (local.random_server.next() % 1021) as usize
     }
 
     fn get_rand_start_pos(rand_len: usize, random: &mut Shift128plusCtx) -> usize {
@@ -337,9 +343,24 @@ impl AuthChainA {
         out[16..32].copy_from_slice(&encrypted);
 
         // [32..36] HMAC-MD5 of bytes 12..32 (UID + encrypted block), key = user_key
+        // C stores this full 16-byte hash into local->last_server_hash — the
+        // server does the same when parsing our auth header, and it becomes the
+        // XOR key for the first data packet the server sends us.
         let hmac_input = &out[12..32];
         let enc_hmac = hmac_md5(&self.local.user_key, hmac_input);
         out[32..36].copy_from_slice(&enc_hmac[..4]);
+        self.local.last_server_hash = enc_hmac;
+
+        // Initialize RC4 BEFORE packing the data payload (C auth_chain.c:589-595).
+        // Password = base64(user_key) + base64(last_client_hash=hmac1).
+        // Must happen here, not after pack_auth_data returns — the data packet
+        // below is encrypted with this cipher.
+        let password = format!(
+            "{}{}",
+            b64encode(&self.local.user_key),
+            b64encode(&self.local.last_client_hash)
+        );
+        self.init_rc4(&password);
 
         // Pack data as a data packet (matching C auth_chain_a_pack_client_data)
         // The C code appends auth_chain_a_pack_client_data after the auth header
@@ -362,18 +383,12 @@ impl AuthChainA {
             data = &data[head_size..];
             len -= head_size;
             self.local.has_sent_header = true;
-
-            // Initialize RC4 cipher (C auth_chain.c:589-593)
-            // Password = base64(user_key) + base64(last_client_hash)
-            let password = format!(
-                "{}{}",
-                b64encode(&self.local.user_key),
-                b64encode(&self.local.last_client_hash)
-            );
-            self.init_rc4(&password);
+            // RC4 is initialized inside pack_auth_data (C auth_chain.c:589-593),
+            // BEFORE its pack_client_data call — do not re-init here or the
+            // keystream state from the header packet would be lost.
         }
 
-        let unit_size = self.local.tcp_mss as usize - self.local.client_over_head as usize;
+        let unit_size = self.local.tcp_mss as usize - self.server_info.overhead as usize;
         while len > unit_size {
             let packed = self.pack_client_data(&data[..unit_size]);
             result.extend_from_slice(&packed);
@@ -389,55 +404,54 @@ impl AuthChainA {
         Ok(result)
     }
 
+    /// C: auth_chain_a_client_post_decrypt (auth_chain.c:644-731).
+    /// The client NEVER receives an auth header — only data packets produced by
+    /// the server's server_pre_encrypt, so there is no header to skip.
     fn client_post_decrypt_inner(&mut self, data: &[u8]) -> SsrResult<Vec<u8>> {
+        if self.local.recv_buffer.len() + data.len() > 16384 {
+            return Err(crate::error::SsrError::Protocol("auth_chain: recv buffer overflow".into()));
+        }
         self.local.recv_buffer.extend_from_slice(data);
 
         let mut output = Vec::new();
-
-        // Skip auth header and extract payload if not yet consumed
-        // Auth header structure: random(4) + HMAC(8) + UID(4) + encrypt(20) = 36 bytes minimum
-        // But pack_auth_data uses authhead_len=36 and out_size=36+data.len()
-        // Data starts at offset 36 in the packed output
-        // However, the C code's auth header has variable size based on rand_len
-        // For our simplified version, auth header is fixed 36 bytes
-        if !self.local.has_recv_header && self.local.recv_buffer.len() >= 36 {
-            // Auth header is 36 bytes, data follows, then 4-byte HMAC at the end
-            let payload_end = self.local.recv_buffer.len().saturating_sub(4);
-            let payload = if payload_end > 36 { self.local.recv_buffer[36..payload_end].to_vec() } else { Vec::new() };
-            self.local.recv_buffer.clear();
-            self.local.has_recv_header = true;
-            output.extend_from_slice(&payload);
-        }
-
-        // Build key = user_key + recv_id
-        let mut key = self.local.user_key.clone();
-        key.extend_from_slice(&self.local.recv_id.to_le_bytes());
+        ssr_debug!("[acapostd] feed {} bytes, buf={} first16={}", data.len(), self.local.recv_buffer.len(),
+            self.local.recv_buffer.iter().take(16).map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(""));
 
         while self.local.recv_buffer.len() > 4 {
-            // Parse data_len (XORed with last_server_hash)
-            let data_len = (((self.local.recv_buffer[1] ^ self.local.last_client_hash[15]) as usize) << 8)
-                + (self.local.recv_buffer[0] ^ self.local.last_client_hash[14]) as usize;
+            // data_len is XORed with last_server_hash[14..16] (server direction)
+            let data_len = (((self.local.recv_buffer[1] ^ self.local.last_server_hash[15]) as usize) << 8)
+                + (self.local.recv_buffer[0] ^ self.local.last_server_hash[14]) as usize;
 
-            let rand_len = Self::get_client_rand_len(&mut self.local, data_len);
+            // Reinit random_server from last_server_hash + data_len, so that the
+            // rand_len draw and the start_pos draw share one PRNG stream — same
+            // as C get_server_rand_len followed by get_rand_start_pos.
+            let rand_len = Self::get_server_rand_len(&mut self.local, data_len);
             let mut len = data_len + rand_len;
             if len >= SSR_BUFF_SIZE * 2 {
                 self.local.recv_buffer.clear();
                 return Err(crate::error::SsrError::Protocol("auth_chain: over size".into()));
             }
-            len += 2; // +2 for HMAC
-
+            len += 4; // +2 length field +2 HMAC
             if len > self.local.recv_buffer.len() {
+                ssr_debug!("[acapostd] incomplete: data_len={} rand_len={} need={} have={}",
+                    data_len, rand_len, len, self.local.recv_buffer.len());
                 break;
             }
 
-            // Verify HMAC
+            // HMAC key = user_key + recv_id (LE u32), recv_id updated per packet
+            let mut key = self.local.user_key.clone();
+            key.extend_from_slice(&self.local.recv_id.to_le_bytes());
             let hash = hmac_md5(&key, &self.local.recv_buffer[..len - 2]);
             if hash[..2] != self.local.recv_buffer[len - 2..len] {
+                ssr_debug!("[acapostd] HMAC mismatch: data_len={} rand_len={} recv_id={} need={} have={}",
+                    data_len, rand_len, self.local.recv_id,
+                    hash[..2].iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(""),
+                    self.local.recv_buffer[len-2..len].iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(""));
                 self.local.recv_buffer.clear();
                 return Err(crate::error::SsrError::Protocol("auth_chain: HMAC mismatch".into()));
             }
 
-            // Parse position
+            // Payload offset continues the random_server stream reinit'd above
             let pos = if data_len > 0 && rand_len > 0 {
                 2 + Self::get_rand_start_pos(rand_len, &mut self.local.random_server)
             } else {
@@ -448,7 +462,7 @@ impl AuthChainA {
             let encrypted_slice = self.local.recv_buffer[pos..pos + data_len].to_vec();
             let decrypted = self.decrypt_buffer(&encrypted_slice);
 
-            // First packet: extract tcp_mss
+            // First server packet carries tcp_mss in its first 2 bytes
             if self.local.recv_id == 1 && decrypted.len() >= 2 {
                 self.local.tcp_mss = (decrypted[0] as u16) | ((decrypted[1] as u16) << 8);
                 output.extend_from_slice(&decrypted[2..]);
@@ -456,10 +470,11 @@ impl AuthChainA {
                 output.extend_from_slice(&decrypted);
             }
 
-            self.local.last_client_hash = hash;
+            // Only the server-direction hash advances here (C line 713)
             self.local.last_server_hash = hash;
             self.local.recv_id += 1;
             self.local.recv_buffer.drain(..len);
+            ssr_debug!("[acapostd] packet ok: data_len={} -> out_total={}", data_len, output.len());
         }
 
         Ok(output)

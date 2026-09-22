@@ -181,11 +181,39 @@ impl ObfsRelay {
         let mut local_buf = vec![0u8; self.buffer_size];
         let mut remote_buf = vec![0u8; self.buffer_size];
 
-        // Step 1: Send address package as first upstream data
-        // This triggers obfs to generate CCS+Finished + pack_data(address)
+        // Step 1: Wait for first data from local client, then send
+        // address + first data together through protocol layer.
+        // This is needed for auth_chain protocols which pack
+        // head_size=min(1200, total) into the auth header.
         if !self.addr_pkg.is_empty() {
-            ssr_debug!("[relay] Sending address package: {} bytes", self.addr_pkg.len());
-            let framed = self.protocol.client_pre_encrypt(&self.addr_pkg)?;
+            ssr_debug!("[relay] Waiting for first client data to combine with address...");
+            let first_read = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                self.local_read.read(&mut local_buf),
+            ).await;
+            let first_data_len = match first_read {
+                Ok(Ok(0)) => {
+                    ssr_debug!("[relay] Client closed before sending data");
+                    return Ok((total_up, total_down));
+                }
+                Ok(Ok(n)) => {
+                    ssr_debug!("[relay] First client data: {} bytes", n);
+                    n
+                }
+                Ok(Err(e)) => {
+                    ssr_debug!("[relay] Client read error: {e}");
+                    return Ok((total_up, total_down));
+                }
+                Err(_) => {
+                    ssr_debug!("[relay] Client read timeout");
+                    return Ok((total_up, total_down));
+                }
+            };
+            // Combine address + first data for protocol layer
+            let mut combined = self.addr_pkg.clone();
+            combined.extend_from_slice(&local_buf[..first_data_len]);
+            ssr_debug!("[relay] Sending combined address+data: {} bytes", combined.len());
+            let framed = self.protocol.client_pre_encrypt(&combined)?;
             ssr_debug!("[relay] Address framed: {} bytes", framed.len());
             let mut encrypted = self.cipher_env.encrypt_ctx(&mut self.encrypt_ctx, &framed, self.first_encrypt)?;
             if self.first_encrypt {
@@ -201,7 +229,7 @@ impl ObfsRelay {
             ssr_debug!("[relay] FULL HEX: {}", encoded.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(""));
             self.remote_write.write_all(&encoded).await?;
             self.addr_sent = true;
-            total_up += self.addr_pkg.len() as u64;
+            total_up += combined.len() as u64;
 
             // Read server feedback after sending address
             // For origin protocol (AEAD): no feedback needed, skip wait
