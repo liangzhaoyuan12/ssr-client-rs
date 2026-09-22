@@ -109,7 +109,7 @@
 - [x] T1 测试资产入库（见上）
 - [x] T2 边界与负面测试（见下"T2 记录"，net +47 用例）
 - [x] T3 proptest 属性测试（见下"T3 记录"）
-- [x] T4 e2e 矩阵脚本（见下"T4 记录"；8 例历史遗留 FAIL 待查）
+- [x] T4 e2e 矩阵脚本（见下"T4 记录"；**全矩阵 39/51 PASS + 12 SKIP, 0 FAIL**）
 - [ ] T5 异常恢复 / T6 soak
 - [ ] Q1-Q10 代码质量（基线: 35 warning / 138 unwrap / 5 unsafe / 无 release profile）
 - [ ] R1-R6 运行占用（基线未测）

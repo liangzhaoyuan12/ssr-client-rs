@@ -103,15 +103,9 @@ pub fn stream_encrypt(
             Ok(output)
         }
         CipherType::ChaCha20 => {
-            // SSR original ChaCha20 uses 8-byte IV; chacha20 crate expects 12-byte nonce
-            let padded_iv = if iv.len() == 8 {
-                let mut v = [0u8; 12];
-                v[..8].copy_from_slice(iv);
-                v.to_vec()
-            } else {
-                iv.to_vec()
-            };
-            let mut cipher = <chacha20::ChaCha20 as cipher::KeyIvInit>::new_from_slices(key, &padded_iv)
+            // Original ChaCha20 (8-byte nonce, C: libsodium
+            // crypto_stream_chacha20_xor_ic, encrypt.c:208-209).
+            let mut cipher = <chacha20::ChaCha20Legacy as cipher::KeyIvInit>::new_from_slices(key, iv)
                 .map_err(|e| SsrError::crypto(format!("ChaCha20 init: {e}")))?;
             let mut output = plaintext.to_vec();
             cipher.apply_keystream(&mut output);
@@ -218,15 +212,9 @@ pub fn stream_decrypt(
             Ok(output)
         }
         CipherType::ChaCha20 => {
-            // SSR original ChaCha20 uses 8-byte IV; chacha20 crate expects 12-byte nonce
-            let padded_iv = if iv.len() == 8 {
-                let mut v = [0u8; 12];
-                v[..8].copy_from_slice(iv);
-                v.to_vec()
-            } else {
-                iv.to_vec()
-            };
-            let mut cipher = <chacha20::ChaCha20 as cipher::KeyIvInit>::new_from_slices(key, &padded_iv)
+            // Original ChaCha20 (8-byte nonce, C: libsodium
+            // crypto_stream_chacha20_xor_ic, encrypt.c:208-209).
+            let mut cipher = <chacha20::ChaCha20Legacy as cipher::KeyIvInit>::new_from_slices(key, iv)
                 .map_err(|e| SsrError::crypto(format!("ChaCha20 init: {e}")))?;
             let mut output = ciphertext.to_vec();
             cipher.apply_keystream(&mut output);
@@ -303,8 +291,9 @@ mod tests {
 
     #[test]
     fn test_chacha20_roundtrip() {
+        // Original ChaCha20: 8-byte nonce (ssr_cipher_names.h: chacha20 iv=8).
         let key = [0x42u8; 32];
-        let iv = [0x24u8; 12];
+        let iv = [0x24u8; 8];
         let data = b"hello chacha20";
         let encrypted = stream_encrypt(CipherType::ChaCha20, &key, &iv, data).unwrap();
         let decrypted = stream_decrypt(CipherType::ChaCha20, &key, &iv, &encrypted).unwrap();

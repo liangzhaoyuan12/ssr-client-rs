@@ -33,6 +33,9 @@ pub enum EncryptContext {
     DESCFB { cipher: DesCfbEnc },
     Salsa20 { cipher: salsa20::Salsa20 },
     ChaCha20 { cipher: chacha20::ChaCha20 },
+    /// Original (non-IETF) ChaCha20: 8-byte nonce, as libsodium
+    /// crypto_stream_chacha20 used by C (encrypt.c:208-209).
+    ChaCha20Legacy { cipher: chacha20::ChaCha20Legacy },
     /// AEAD streams replace the payload rather than transforming it in place,
     /// so they are handled in `encrypt_ctx` before `encrypt_in_place` runs.
     Aead(AeadEncryptCtx),
@@ -51,6 +54,7 @@ pub enum DecryptContext {
     DESCFB { cipher: DesCfbDec },
     Salsa20 { cipher: salsa20::Salsa20 },
     ChaCha20 { cipher: chacha20::ChaCha20 },
+    ChaCha20Legacy { cipher: chacha20::ChaCha20Legacy },
     Aead(AeadDecryptCtx),
 }
 
@@ -68,6 +72,7 @@ fn encrypt_in_place(ctx: &mut EncryptContext, output: &mut Vec<u8>) {
         EncryptContext::DESCFB { cipher } => { cipher.encrypt(output); }
         EncryptContext::Salsa20 { cipher } => { cipher.apply_keystream(output); }
         EncryptContext::ChaCha20 { cipher } => { cipher.apply_keystream(output); }
+        EncryptContext::ChaCha20Legacy { cipher } => { cipher.apply_keystream(output); }
         // Handled in `encrypt_ctx`: AEAD changes the length, so it cannot be
         // transformed in place.
         EncryptContext::Aead(_) => unreachable!("AEAD is handled in encrypt_ctx"),
@@ -88,6 +93,7 @@ fn decrypt_in_place(ctx: &mut DecryptContext, output: &mut Vec<u8>) {
         DecryptContext::DESCFB { cipher } => { cipher.decrypt(output); }
         DecryptContext::Salsa20 { cipher } => { cipher.apply_keystream(output); }
         DecryptContext::ChaCha20 { cipher } => { cipher.apply_keystream(output); }
+        DecryptContext::ChaCha20Legacy { cipher } => { cipher.apply_keystream(output); }
         DecryptContext::Aead(_) => unreachable!("AEAD is handled in decrypt_ctx"),
     }
 }
@@ -177,17 +183,19 @@ impl CipherEnv {
             CT::DESCFB => EncryptContext::DESCFB { cipher: DesCfbEnc::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? },
             CT::Salsa20 => EncryptContext::Salsa20 { cipher: <salsa20::Salsa20 as cipher::KeyIvInit>::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? },
             CT::ChaCha20 => {
-                let piv = if iv.len() == 8 { let mut v = [0u8; 12]; v[..8].copy_from_slice(iv); v.to_vec() } else { iv.to_vec() };
-                EncryptContext::ChaCha20 { cipher: <chacha20::ChaCha20 as cipher::KeyIvInit>::new_from_slices(&self.key, &piv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? }
+                // Original ChaCha20 with 8-byte nonce (C: libsodium
+                // crypto_stream_chacha20_xor_ic, encrypt.c:208-209).
+                EncryptContext::ChaCha20Legacy { cipher: <chacha20::ChaCha20Legacy as cipher::KeyIvInit>::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? }
             }
             CT::ChaCha20IETF => EncryptContext::ChaCha20 { cipher: <chacha20::ChaCha20 as cipher::KeyIvInit>::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? },
             CT::RC4Md5 | CT::RC4Md56 => {
-                // SSR derives a per-connection RC4 key from key || iv and then
-                // uses no further IV (encrypt.c:602-607). rc4-md5-6 keeps only
-                // the first 6 bytes of the digest.
+                // C cipher_context_set_iv (encrypt.c:602-611): true_key =
+                // md5(key || iv), then mbedtls_cipher_setkey(true_key,
+                // enc_key_len * 8) with enc_key_len = cipher_key_size(rc4) = 16
+                // — the FULL 16-byte digest, for BOTH rc4-md5 and rc4-md5-6.
+                // iv_len differs only (16 vs 6, ssr_cipher_names.h).
                 let digest = crate::utils::hash::md5_multi(&[&self.key, iv]);
-                let klen = if self.method == CT::RC4Md56 { 6 } else { 16 };
-                let c = <rc4::Rc4 as cipher::KeyInit>::new_from_slice(&digest[..klen]).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))?;
+                let c = <rc4::Rc4 as cipher::KeyInit>::new_from_slice(&digest).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))?;
                 EncryptContext::RC4 { cipher: c }
             }
             _ => return Err(crate::error::SsrError::crypto(format!("Cipher {:?} not supported", self.method))),
@@ -197,6 +205,11 @@ impl CipherEnv {
     pub fn encrypt_ctx(&self, ctx: &mut EncryptContext, plaintext: &[u8], _is_first: bool) -> SsrResult<Vec<u8>> {
         if let EncryptContext::Aead(a) = ctx {
             return a.encrypt(plaintext);
+        }
+        if matches!(ctx, EncryptContext::Table) {
+            // The in-place helpers carry no table; apply it here (C applies
+            // enc_table/dec_table per byte on every TCP segment).
+            return Ok(match self.table_cipher { Some(ref t) => t.encrypt(plaintext), None => plaintext.to_vec() });
         }
         let mut output = plaintext.to_vec();
         encrypt_in_place(ctx, &mut output);
@@ -244,14 +257,13 @@ impl CipherEnv {
             CT::DESCFB => DecryptContext::DESCFB { cipher: DesCfbDec::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? },
             CT::Salsa20 => DecryptContext::Salsa20 { cipher: <salsa20::Salsa20 as cipher::KeyIvInit>::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? },
             CT::ChaCha20 => {
-                let piv = if iv.len() == 8 { let mut v = [0u8; 12]; v[..8].copy_from_slice(iv); v.to_vec() } else { iv.to_vec() };
-                DecryptContext::ChaCha20 { cipher: <chacha20::ChaCha20 as cipher::KeyIvInit>::new_from_slices(&self.key, &piv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? }
+                DecryptContext::ChaCha20Legacy { cipher: <chacha20::ChaCha20Legacy as cipher::KeyIvInit>::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? }
             }
             CT::ChaCha20IETF => DecryptContext::ChaCha20 { cipher: <chacha20::ChaCha20 as cipher::KeyIvInit>::new_from_slices(&self.key, iv).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))? },
             CT::RC4Md5 | CT::RC4Md56 => {
+                // Full 16-byte md5(key || iv), see make_encrypt_ctx comment.
                 let digest = crate::utils::hash::md5_multi(&[&self.key, iv]);
-                let klen = if self.method == CT::RC4Md56 { 6 } else { 16 };
-                let c = <rc4::Rc4 as cipher::KeyInit>::new_from_slice(&digest[..klen]).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))?;
+                let c = <rc4::Rc4 as cipher::KeyInit>::new_from_slice(&digest).map_err(|e| crate::error::SsrError::crypto(format!("{e}")))?;
                 DecryptContext::RC4 { cipher: c }
             }
             _ => return Err(crate::error::SsrError::crypto(format!("Cipher {:?} not supported", self.method))),
@@ -261,6 +273,9 @@ impl CipherEnv {
     pub fn decrypt_ctx(&self, ctx: &mut DecryptContext, ciphertext: &[u8]) -> SsrResult<Vec<u8>> {
         if let DecryptContext::Aead(d) = ctx {
             return d.decrypt(ciphertext);
+        }
+        if matches!(ctx, DecryptContext::Table) {
+            return Ok(match self.table_cipher { Some(ref t) => t.decrypt(ciphertext), None => ciphertext.to_vec() });
         }
         let mut output = ciphertext.to_vec();
         decrypt_in_place(ctx, &mut output);

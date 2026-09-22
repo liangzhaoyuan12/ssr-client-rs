@@ -106,7 +106,13 @@ impl CipherType {
     /// Get IV size for this cipher
     pub fn iv_size(&self) -> usize {
         match self {
-            Self::None | Self::RC4 | Self::RC4Md56 | Self::RC4Md5 => 0,
+            // C table (ssr_cipher_names.h: iv_size, key_size): rc4=0/16,
+            // rc4-md5=16/16, rc4-md5-6=6/16. enc_iv_len uses ss_cipher_iv_size
+            // for both md5 variants (encrypt.c:1317-1321), so BOTH transmit
+            // their IV on the wire.
+            Self::None | Self::RC4 => 0,
+            Self::RC4Md56 => 6,
+            Self::RC4Md5 => 16,
             Self::Table => 0,
             Self::AES128CFB | Self::AES128CTR => 16,
             Self::AES192CFB | Self::AES192CTR => 16,

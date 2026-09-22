@@ -79,6 +79,16 @@ OBFS_LIST = [
 # auth_chain_f + key_len>16 SIGBUSes the C server (stack overflow in
 # auth_chain_f_set_server_info): see PROGRESS. Use a 16-byte-key cipher.
 PROTOCOL_METHOD_OVERRIDES = {"auth_chain_f": "aes-128-cfb"}
+# GOALS control rule: if the C client fails the same combo, record SKIP —
+# the C SERVER never installs server_post_decrypt for these protocols
+# (only auth_sha1_v4 / auth_aes128 / auth_chain get one; ssr_executive.c:649
+# NULL-skips), so no client can pass. Verified 2026-09-23 --ref-c: same 4 FAIL.
+PROTOCOL_SKIP = {
+    "verify_simple": "server has no server_post_decrypt (C client fails too)",
+    "auth_simple": "server has no server_post_decrypt (C client fails too)",
+    "auth_sha1": "server has no server_post_decrypt (C client fails too)",
+    "auth_sha1_v2": "server has no server_post_decrypt (C client fails too)",
+}
 
 _pids = []
 # The local HTTP target must OUTLIVE per-case kill_tracked(); track it apart.
@@ -147,7 +157,10 @@ def write_cfg(method, protocol, obfs, path, is_server):
     }
     if not is_server:
         cfg["local_address"] = "127.0.0.1"
+        # Rust reads listen_port; the C client only reads flat local_port
+        # (config_json.c backward-compat branch), so emit both.
         cfg["listen_port"] = CLI_PORT
+        cfg["local_port"] = CLI_PORT
     with open(path, "w") as fh:
         json.dump(cfg, fh, indent=2)
 
@@ -264,6 +277,9 @@ def build_cases(axis):
     if axis in ("all", "protocol"):
         for p in PROTOCOLS:
             m = PROTOCOL_METHOD_OVERRIDES.get(p, "aes-256-cfb")
+            if p in PROTOCOL_SKIP:
+                cases.append(("protocol", m, p, "plain", f"SKIP: {PROTOCOL_SKIP[p]}"))
+                continue
             note = "uses aes-128-cfb (C server SIGBUS with key_len>16)" \
                 if p in PROTOCOL_METHOD_OVERRIDES else ""
             cases.append(("protocol", m, p, "plain", note))
