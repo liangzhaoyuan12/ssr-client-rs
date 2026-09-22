@@ -36,6 +36,21 @@ pub trait Protocol: Send {
     /// Unwrap data after decryption (client side)
     /// Returns the original plain data
     fn client_post_decrypt(&mut self, data: &[u8]) -> SsrResult<Vec<u8>>;
+
+    /// C: client_udp_pre_encrypt hook (per-datagram, SSR framing before the
+    /// SS cipher layer). Default identity matches C protocols that leave
+    /// `client_udp_pre_encrypt = NULL` (auth_simple/sha1 family, origin).
+    /// Implemented by auth_aes128 and auth_chain_a~f.
+    fn udp_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
+        Ok(plaindata.to_vec())
+    }
+
+    /// C: client_udp_post_decrypt hook (per-datagram, after SS cipher
+    /// decrypt). Returns the stripped payload; Err means the datagram fails
+    /// the protocol MAC and must be dropped (C returns 0 → drop).
+    fn udp_post_decrypt(&mut self, data: &[u8]) -> SsrResult<Vec<u8>> {
+        Ok(data.to_vec())
+    }
 }
 
 /// Global data shared across protocol instances (client_id, connection_id)

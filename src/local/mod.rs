@@ -1,3 +1,5 @@
+pub mod udp_relay;
+
 /// Local SOCKS5 proxy server and SSR client orchestrator.
 ///
 /// The SsrClient:
@@ -55,6 +57,18 @@ impl SsrClient {
         self.running.store(true, Ordering::SeqCst);
 
         log::info!("SOCKS5 server listening on {addr}");
+
+        // UDP relay (SOCKS5 UDP ASSOCIATE) — binds the same port number on UDP.
+        // C creates the listener during startup; a bind failure aborts startup.
+        if self.config.udp {
+            let relay = crate::local::udp_relay::UdpRelay::bind(self.config.clone()).await?;
+            relay.spawn(self.shutdown.clone());
+            log::info!(
+                "UDP relay listening on {}:{}",
+                self.config.listen_address,
+                self.config.listen_port
+            );
+        }
 
         loop {
             tokio::select! {
@@ -384,6 +398,43 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
     // Step 2: Connect request
     let connect_req = read_connect_request(&mut stream).await?;
 
+    // UDP ASSOCIATE: reply with this connection's local address (C: uv_tcp_
+    // getsockname, client.c:653) — the UDP relay binds the same port number.
+    if connect_req.cmd == socks5::CMD_UDP_ASSOCIATE {
+        let local = stream
+            .local_addr()
+            .map_err(|e| SsrError::Connection(format!("local_addr: {e}")))?;
+        let (atyp, bytes, port) = match local {
+            std::net::SocketAddr::V4(a) => (ATYP_IPV4, a.ip().octets().to_vec(), a.port()),
+            std::net::SocketAddr::V6(a) => (socks5::ATYP_IPV6, a.ip().octets().to_vec(), a.port()),
+        };
+        let rep = if config.udp {
+            socks5::REP_SUCCESS
+        } else {
+            socks5::REP_COMMAND_NOT_SUPPORTED
+        };
+        stream
+            .write_all(&socks5::build_connect_reply(rep, atyp, &bytes, port))
+            .await?;
+        ssr_debug!(
+            "[udp] UDP ASSOCIATE {} (relay {})",
+            if config.udp { "granted" } else { "refused" },
+            if config.udp { "on" } else { "off" }
+        );
+        if config.udp {
+            // Hold the control connection: the association lives as long as
+            // this TCP connection (RFC 1928; C stage s5_udp_accoc).
+            let mut buf = [0u8; 1024];
+            loop {
+                match stream.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+            }
+        }
+        return Ok(());
+    }
+
     if connect_req.cmd != CMD_CONNECT {
         stream
             .write_all(&socks5::build_connect_reply(
@@ -455,48 +506,70 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
     // Step 6: Relay data between client and SSR server (with obfs encode/decode)
     //
     // AEAD downgrade already applied above (obfs=plain, protocol=origin).
+    let protocol = create_protocol(config, &env, is_aead)?;
+
+    ssr_debug!("[conn] Starting obfs relay");
+    let relay = ObfsRelay::new(stream, remote_stream, obfs_inst, env, protocol, addr_pkg)?;
+    let (up, down) = relay.run().await?;
+
+    ssr_debug!("[conn] Relay finished: upstream={up}, downstream={down}");
+    Ok(())
+}
+
+/// Build the protocol plugin for one connection/datagram stream.
+///
+/// Shared by the TCP path (`handle_connection`) and the UDP relay — both must
+/// construct identical instances (AEAD downgrades to `origin`, auth_chain
+/// reports overhead 4, `extra_param` carries `protocol_param` as in C
+/// `ssr_executive.c`). Calls `init_user_key()` before returning.
+pub(crate) fn create_protocol(
+    config: &SsrClientConfig,
+    env: &crate::crypto::cipher_env::CipherEnv,
+    is_aead: bool,
+) -> SsrResult<Box<dyn crate::protocol::Protocol>> {
     use crate::protocol::auth_aes128::AuthAES128;
     use crate::protocol::auth_chain::*;
-    use crate::protocol::auth_sha1_v4::AuthSHA1V4;
-    use crate::protocol::auth_sha1_v2::AuthSHA1V2;
     use crate::protocol::auth_sha1::AuthSHA1;
+    use crate::protocol::auth_sha1_v2::AuthSHA1V2;
+    use crate::protocol::auth_sha1_v4::AuthSHA1V4;
     use crate::protocol::auth_simple::AuthSimple;
     use crate::protocol::{Protocol, ServerInfo};
+
     let mut protocol: Box<dyn Protocol> = if is_aead {
         // AEAD: origin protocol (no framing), matching C ssr_executive.c:178
         Box::new(crate::protocol::origin::Origin)
     } else {
-        let mut srv = ServerInfo {
+        let srv = ServerInfo {
             key: env.key().to_vec(),
+            extra_param: config.protocol_param.clone(),
             ..Default::default()
         };
+        let mut srv = srv;
         // Set overhead based on protocol (C: auth_chain_a_get_overhead returns 4)
-        match config.protocol.as_str() {
-            "auth_chain_a" | "auth_chain_b" | "auth_chain_c" | "auth_chain_d" | "auth_chain_e" | "auth_chain_f" => {
-                srv.overhead = 4;
-            }
-            _ => {}
+        if matches!(
+            config.protocol.as_str(),
+            "auth_chain_a"
+                | "auth_chain_b"
+                | "auth_chain_c"
+                | "auth_chain_d"
+                | "auth_chain_e"
+                | "auth_chain_f"
+        ) {
+            srv.overhead = 4;
         }
         match config.protocol.as_str() {
-            // auth_aes128 variants
             "auth_aes128_md5" => Box::new(AuthAES128::new_md5(srv)),
             "auth_aes128_sha1" => Box::new(AuthAES128::new_sha1(srv)),
-            // auth_sha1_v4
             "auth_sha1_v4" => Box::new(AuthSHA1V4::new(srv)),
-            // auth_sha1_v2
             "auth_sha1_v2" => Box::new(AuthSHA1V2::new(srv)),
-            // auth_sha1
             "auth_sha1" => Box::new(AuthSHA1::new(srv)),
-            // auth_simple
             "auth_simple" => Box::new(AuthSimple::new()),
-            // auth_chain variants
             "auth_chain_a" => Box::new(AuthChainA::new(srv, "auth_chain_a")),
             "auth_chain_b" => Box::new(AuthChainB::new(srv)),
             "auth_chain_c" => Box::new(AuthChainC::new(srv)),
             "auth_chain_d" => Box::new(AuthChainD::new(srv)),
             "auth_chain_e" => Box::new(AuthChainE::new(srv)),
             "auth_chain_f" => Box::new(AuthChainF::new(srv, &config.protocol_param)),
-            // origin (no framing)
             "origin" | "" => Box::new(crate::protocol::origin::Origin),
             other => {
                 return Err(SsrError::Protocol(format!(
@@ -506,13 +579,7 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
         }
     };
     protocol.init_user_key();
-
-    ssr_debug!("[conn] Starting obfs relay");
-    let relay = ObfsRelay::new(stream, remote_stream, obfs_inst, env, protocol, addr_pkg)?;
-    let (up, down) = relay.run().await?;
-
-    ssr_debug!("[conn] Relay finished: upstream={up}, downstream={down}");
-    Ok(())
+    Ok(protocol)
 }
 
 /// Read and parse the SOCKS5 method negotiation from the client.

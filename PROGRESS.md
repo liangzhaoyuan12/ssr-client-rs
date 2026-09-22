@@ -60,5 +60,35 @@
   我方客户端取 min(16) = C 的意图行为
 - 所有184 测试通过
 
+### ✅ UDP relay 端到端 (当前)
+- `src/local/udp_relay.rs`: SOCKS5 UDP ASSOCIATE 中继，对照 C
+  udp_ssr_client.c 移植:
+  - 请求: `[RSV|FRAG|ATYP|ADDR|PORT|DATA]` → strip 3 字节 →
+    `client_udp_pre_encrypt` → `encrypt_udp` → 按 (app, target) 会话
+    socket 发往服务端; FRAG!=0 / 端口5353(mDNS) / 超大包丢弃
+  - 响应: 解密 → `client_udp_post_decrypt` → 剥 SS 地址头 →
+    回给应用的地址头 = **app 自身地址**（C udp_ssr_client.c:240
+    `incoming_addr`，怪异但逐字节照抄）
+  - 会话表按 (app_addr, target) 复用远端 socket，空闲超时
+    `udp_timeout` 后移除
+- `CipherEnv::encrypt_udp/decrypt_udp`: 单报文加解密 —— 流密码每包
+  随机 IV（RC4 iv_len=0 无 IV）; AEAD = `salt||seal(nonce=0)||tag`
+- 协议层 UDP 钩子: trait 默认 identity; AuthAES128 = `plain||uid(4LE)||
+  hmac_md5(user_key, plain||uid)`; AuthChain A 实现
+  `auth_chain_a_client_udp_pre_encrypt`（rc4+b64+rand+auth3+uid4+mac1）,
+  B–F 委托 inner
+- `create_protocol()` 从 handle_connection 提取复用（含 AEAD→origin
+  降级）; `extra_param = protocol_param` 对齐 C ssr_executive.c:416
+- `handle_connection` 新增 CMD_UDP_ASSOCIATE 分支: 回复 TCP 连接
+  local_addr（=UDP 中继绑定端口）, `udp:false` 时回 0x07
+- **E2e 已验证**（本地 ssr-server "udp":true + Python SOCKS5 客户端
+  → 本地 echo 回环, /tmp/test_udp_e2e.py）:
+  - auth_chain_a + aes-256-cfb (18396/19912) ✓
+  - auth_aes128_sha1 + aes-256-cfb (18397/19913) ✓
+  - origin + aes-128-gcm AEAD (18398/19914) ✓
+  - 每组含: ASSOCIATE 应答 / IPv4 echo / 会话复用二连发 / domain 目标
+- 所有186 测试通过
+
 ### 未开始
-- UDP relay
+- 无 —— GOALS.md 有序阶段 (AEAD → auth_sha1_v4 → auth_chain_a–f →
+  UDP relay) 全部完成

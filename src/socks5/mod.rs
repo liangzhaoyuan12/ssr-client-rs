@@ -242,6 +242,94 @@ pub fn build_success_reply(atyp: u8) -> Vec<u8> {
     }
 }
 
+/// Parsed SOCKS5 UDP datagram: `[RSV(2)][FRAG(1)][ATYP|ADDR|PORT][DATA]`.
+///
+/// Mirrors C `udprelay_parse_header` (udprelay.c:138) called at
+/// `offset = 3` in `client_udp_listener_recv_cb` (udp_ssr_client.c:396-420).
+pub struct UdpDatagram {
+    /// Fragment field (must be 0 — C drops non-zero fragments).
+    pub frag: u8,
+    /// Target address from the header.
+    pub addr: TargetAddress,
+    /// Target port from the header.
+    pub port: u16,
+    /// Payload after the address header (DATA).
+    pub payload: Vec<u8>,
+    /// Total header bytes consumed (RSV+FRAG+ATYP|ADDR|PORT).
+    pub header_len: usize,
+}
+
+/// Parse a SOCKS5 UDP datagram. Returns `Err` on malformed input (C: drop).
+pub fn parse_udp_datagram(data: &[u8]) -> SsrResult<UdpDatagram> {
+    if data.len() < 4 {
+        return Err(SsrError::socks5("UDP datagram too short"));
+    }
+    let frag = data[2];
+    let atyp = data[3];
+    let (addr, port, hdr_end) = match atyp {
+        ATYP_IPV4 => {
+            if data.len() < 10 {
+                return Err(SsrError::socks5("UDP IPv4 header truncated"));
+            }
+            let mut ip = [0u8; 4];
+            ip.copy_from_slice(&data[4..8]);
+            (
+                TargetAddress::IPv4(ip),
+                u16::from_be_bytes([data[8], data[9]]),
+                10,
+            )
+        }
+        ATYP_DOMAIN => {
+            if data.len() < 5 {
+                return Err(SsrError::socks5("UDP domain header truncated"));
+            }
+            let domain_len = data[4] as usize;
+            // C: `if ((size_t)(name_len + 4) <= buf_len)`
+            if data.len() < 5 + domain_len + 2 {
+                return Err(SsrError::socks5("UDP domain truncated"));
+            }
+            let domain = data[5..5 + domain_len].to_vec();
+            let port =
+                u16::from_be_bytes([data[5 + domain_len], data[6 + domain_len]]);
+            (TargetAddress::Domain(domain), port, 7 + domain_len)
+        }
+        ATYP_IPV6 => {
+            if data.len() < 22 {
+                return Err(SsrError::socks5("UDP IPv6 header truncated"));
+            }
+            let mut ip = [0u8; 16];
+            ip.copy_from_slice(&data[4..20]);
+            (
+                TargetAddress::IPv6(ip),
+                u16::from_be_bytes([data[20], data[21]]),
+                22,
+            )
+        }
+        _ => {
+            return Err(SsrError::socks5(format!(
+                "UDP datagram unknown atyp: 0x{atyp:02x}"
+            )))
+        }
+    };
+    Ok(UdpDatagram {
+        frag,
+        addr,
+        port,
+        payload: data[hdr_end..].to_vec(),
+        header_len: hdr_end,
+    })
+}
+
+/// Build a SOCKS5 UDP datagram `[RSV=0][RSV=0][FRAG=0][ATYP|ADDR|PORT][DATA]`
+/// (C: `s5_build_udp_datagram`, s5.c:499 — `memset(result, 0, …)` zeroes RSV
+/// and FRAG, then address header, then payload).
+pub fn build_udp_datagram(addr: &TargetAddress, port: u16, payload: &[u8]) -> Vec<u8> {
+    let mut out = vec![0u8; 3]; // RSV(2) = 0, FRAG(1) = 0
+    out.extend_from_slice(&build_address_package(addr, port));
+    out.extend_from_slice(payload);
+    out
+}
+
 /// Read exact bytes from a buffer (blocking parse helper).
 /// Returns the consumed bytes and remaining slice.
 pub fn take_bytes<'a>(

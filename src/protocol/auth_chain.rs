@@ -1,5 +1,5 @@
-use crate::error::SsrResult;
-use crate::utils::hash::{hmac_md5, md5};
+use crate::error::{SsrError, SsrResult};
+use crate::utils::hash::hmac_md5;
 use crate::crypto::bytes_to_key::bytes_to_key;
 use crate::crypto::types::CipherType;
 use crate::utils::base64::b64encode;
@@ -57,6 +57,17 @@ impl Shift128plusCtx {
         self.v[1] = x;
         x.wrapping_add(y)
     }
+}
+
+/// One-shot RC4 (C: `cipher_simple_update_data(password, "rc4", …)` — fresh
+/// context per call, `bytes_to_key(password, 16)`, IV length 0 so no IV).
+/// RC4 is symmetric, so the same fn encrypts and decrypts.
+fn rc4_once(password: &str, data: &[u8]) -> Vec<u8> {
+    let key = bytes_to_key(password.as_bytes(), 16);
+    let mut ctx = <rc4::Rc4 as KeyInit>::new_from_slice(&key).expect("rc4 key");
+    let mut out = data.to_vec();
+    ctx.apply_keystream(&mut out);
+    out
 }
 
 // ==================== Auth Chain A ====================
@@ -379,19 +390,87 @@ impl AuthChainA {
         }
         if !self.server_info.extra_param.is_empty() {
             if let Some(delim_pos) = self.server_info.extra_param.find(':') {
+                // C (auth_chain.c:545-558): delimiter present always wins —
+                // strtol() yields 0 for garbage uid, then raw key_str is stored.
                 let uid_str = &self.server_info.extra_param[..delim_pos];
                 let key_str = &self.server_info.extra_param[delim_pos + 1..];
-                if let Ok(uid_long) = uid_str.trim().parse::<u32>() {
-                    memintcopy_lt(&mut self.local.uid, uid_long);
-                    let hash = md5(key_str.as_bytes());
-                    self.local.user_key = hash.to_vec();
-                    return;
-                }
+                let uid_long = uid_str.trim().parse::<u32>().unwrap_or(0);
+                memintcopy_lt(&mut self.local.uid, uid_long);
+                // C: buffer_store(local->user_key, key_str, strlen(key_str))
+                // — stores the RAW key string, no hashing (auth_chain.c:557).
+                self.local.user_key = key_str.as_bytes().to_vec();
+                return;
             }
         }
         use rand::RngCore;
         rand::thread_rng().fill_bytes(&mut self.local.uid);
         self.local.user_key = self.server_info.key.clone();
+    }
+
+    /// C: udp_get_rand_len (auth_chain.c:370-374) — reinit the PRNG from the
+    /// 16-byte hash (no warmup), then `next() % 127`.
+    fn udp_rand_len(ctx: &mut Shift128plusCtx, hash: &[u8; 16]) -> usize {
+        *ctx = Shift128plusCtx::from_bin(hash);
+        (ctx.next() % 127) as usize
+    }
+
+    /// C: auth_chain_a_client_udp_pre_encrypt (auth_chain.c:1533-1606).
+    ///
+    /// ```text
+    /// rc4(b64(user_key)+b64(md5(hmac(server_key, auth3))), plain)
+    ///   || rand(rand_len) || auth(3) || uid^md5(4) || hmac(user_key, ·)[0]
+    /// ```
+    fn udp_pre_inner(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
+        use rand::RngCore;
+        self.init_user_key();
+        let mut auth_data = [0u8; 3];
+        rand::thread_rng().fill_bytes(&mut auth_data);
+        let md5data = hmac_md5(&self.server_info.key, &auth_data);
+        let mut uid_obf = [0u8; 4];
+        for i in 0..4 {
+            uid_obf[i] = self.local.uid[i] ^ md5data[i];
+        }
+        let rand_len = Self::udp_rand_len(&mut self.local.random_client, &md5data);
+        // auth_chain_a_encryptor(true, "rc4", user_key, md5data, plain)
+        let mixed_key = format!(
+            "{}{}",
+            b64encode(&self.local.user_key),
+            b64encode(&md5data)
+        );
+        let mut out = rc4_once(&mixed_key, plaindata);
+        let mut rnd = vec![0u8; rand_len];
+        rand::thread_rng().fill_bytes(&mut rnd);
+        out.extend_from_slice(&rnd);
+        out.extend_from_slice(&auth_data);
+        out.extend_from_slice(&uid_obf);
+        let mac = hmac_md5(&self.local.user_key, &out);
+        out.push(mac[0]);
+        Ok(out)
+    }
+
+    /// C: auth_chain_a_client_udp_post_decrypt (auth_chain.c:1608-1661).
+    /// Returns the decrypted datagram; `Err` means drop (C returns 0).
+    fn udp_post_inner(&mut self, data: &[u8]) -> SsrResult<Vec<u8>> {
+        if data.len() <= 8 {
+            return Err(SsrError::Protocol("auth_chain: udp datagram too short".into()));
+        }
+        let verify = hmac_md5(&self.local.user_key, &data[..data.len() - 1]);
+        if verify[0] != data[data.len() - 1] {
+            return Err(SsrError::Protocol("auth_chain: udp mac mismatch".into()));
+        }
+        // C: buffer_create_from(plaindata + datalength - 8, 7)
+        let hash = hmac_md5(&self.server_info.key, &data[data.len() - 8..data.len() - 1]);
+        let rand_len = Self::udp_rand_len(&mut self.local.random_server, &hash);
+        if data.len() < rand_len + 8 {
+            return Err(SsrError::Protocol("auth_chain: udp datagram truncated".into()));
+        }
+        let outlength = data.len() - rand_len - 8;
+        let password = format!(
+            "{}{}",
+            b64encode(&self.local.user_key),
+            b64encode(&hash)
+        );
+        Ok(rc4_once(&password, &data[..outlength]))
     }
 
     fn init_rc4(&mut self, password: &str) {
@@ -671,6 +750,14 @@ impl AuthChainA {
 }
 
 impl Protocol for AuthChainA {
+    fn udp_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
+        self.udp_pre_inner(plaindata)
+    }
+
+    fn udp_post_decrypt(&mut self, data: &[u8]) -> SsrResult<Vec<u8>> {
+        self.udp_post_inner(data)
+    }
+
     fn set_salt(&mut self, salt: &str) {
         // Salt is set via constructor
         let _ = salt;
@@ -755,6 +842,16 @@ impl Protocol for AuthChainB {
     fn client_post_decrypt(&mut self, data: &[u8]) -> SsrResult<Vec<u8>> {
         self.inner.client_post_decrypt_inner(data)
     }
+
+    // C: auth_chain_b_new_obfs derives from auth_chain_a_new_obfs
+    // without overriding the UDP hooks — delegate to inner (auth_chain.c:261).
+    fn udp_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
+        self.inner.udp_pre_encrypt(plaindata)
+    }
+
+    fn udp_post_decrypt(&mut self, data: &[u8]) -> SsrResult<Vec<u8>> {
+        self.inner.udp_post_decrypt(data)
+    }
 }
 
 // ==================== Auth Chain C ====================
@@ -790,6 +887,16 @@ impl AuthChainC {
 }
 
 impl Protocol for AuthChainC {
+    // C: derives from auth_chain_a_new_obfs — UDP hooks inherited unchanged
+    // (auth_chain.c:261 registers them only in auth_chain_a_new_obfs).
+    fn udp_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
+        self.inner.udp_pre_encrypt(plaindata)
+    }
+
+    fn udp_post_decrypt(&mut self, data: &[u8]) -> SsrResult<Vec<u8>> {
+        self.inner.udp_post_decrypt(data)
+    }
+
     fn set_salt(&mut self, _salt: &str) {}
     fn get_overhead(&self) -> usize { 4 }
     fn need_feedback(&self) -> bool { true }
@@ -852,6 +959,16 @@ impl AuthChainD {
 }
 
 impl Protocol for AuthChainD {
+    // C: derives from auth_chain_a_new_obfs — UDP hooks inherited unchanged
+    // (auth_chain.c:261 registers them only in auth_chain_a_new_obfs).
+    fn udp_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
+        self.inner.udp_pre_encrypt(plaindata)
+    }
+
+    fn udp_post_decrypt(&mut self, data: &[u8]) -> SsrResult<Vec<u8>> {
+        self.inner.udp_post_decrypt(data)
+    }
+
     fn set_salt(&mut self, _salt: &str) {}
     fn get_overhead(&self) -> usize { 4 }
     fn need_feedback(&self) -> bool { true }
@@ -885,6 +1002,16 @@ impl AuthChainE {
 }
 
 impl Protocol for AuthChainE {
+    // C: derives from auth_chain_a_new_obfs — UDP hooks inherited unchanged
+    // (auth_chain.c:261 registers them only in auth_chain_a_new_obfs).
+    fn udp_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
+        self.inner.udp_pre_encrypt(plaindata)
+    }
+
+    fn udp_post_decrypt(&mut self, data: &[u8]) -> SsrResult<Vec<u8>> {
+        self.inner.udp_post_decrypt(data)
+    }
+
     fn set_salt(&mut self, _salt: &str) {}
     fn get_overhead(&self) -> usize { 4 }
     fn need_feedback(&self) -> bool { true }
@@ -1004,6 +1131,16 @@ impl AuthChainF {
 }
 
 impl Protocol for AuthChainF {
+    // C: derives from auth_chain_a_new_obfs — UDP hooks inherited unchanged
+    // (auth_chain.c:261 registers them only in auth_chain_a_new_obfs).
+    fn udp_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
+        self.inner.udp_pre_encrypt(plaindata)
+    }
+
+    fn udp_post_decrypt(&mut self, data: &[u8]) -> SsrResult<Vec<u8>> {
+        self.inner.udp_post_decrypt(data)
+    }
+
     fn set_salt(&mut self, _salt: &str) {}
     fn get_overhead(&self) -> usize { 4 }
     fn need_feedback(&self) -> bool { true }

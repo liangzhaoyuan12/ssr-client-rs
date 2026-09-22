@@ -83,14 +83,15 @@ impl AuthAES128 {
         }
         if !self.server_info.extra_param.is_empty() {
             if let Some(delim_pos) = self.server_info.extra_param.find(':') {
+                // C (auth.c:1604-1618): delimiter present always wins — strtol()
+                // yields 0 for garbage uid, then hash(key_str) is stored.
                 let uid_str = &self.server_info.extra_param[..delim_pos];
                 let key_str = &self.server_info.extra_param[delim_pos + 1..];
-                if let Ok(uid_long) = uid_str.trim().parse::<u32>() {
-                    memintcopy_lt(&mut self.uid, uid_long);
-                    let hash = (self.hash_fn)(key_str.as_bytes());
-                    self.user_key = hash[..self.hash_len].to_vec();
-                    return;
-                }
+                let uid_long = uid_str.trim().parse::<u32>().unwrap_or(0);
+                memintcopy_lt(&mut self.uid, uid_long);
+                let hash = (self.hash_fn)(key_str.as_bytes());
+                self.user_key = hash[..self.hash_len].to_vec();
+                return;
             }
         }
         // Default: random uid, use server key
@@ -339,6 +340,37 @@ impl Protocol for AuthAES128 {
 
         self.last_data_len = plaindata.len();
         Ok(result)
+    }
+
+    /// C: auth_aes128_sha1_client_udp_pre_encrypt (auth.c:1594-1645).
+    /// out = plain || uid(4) || hmac(user_key, plain||uid)[..4]
+    fn udp_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
+        self.init_user_key();
+        let mut out = Vec::with_capacity(plaindata.len() + 8);
+        out.extend_from_slice(plaindata);
+        out.extend_from_slice(&self.uid);
+        let hash = (self.hmac_fn)(&self.user_key, &out);
+        out.extend_from_slice(&hash[..4]);
+        Ok(out)
+    }
+
+    /// C: auth_aes128_sha1_client_udp_post_decrypt (auth.c:1648-1672).
+    /// Verify hmac(server_key, data[..len-4])[..4] against the tail,
+    /// then strip it; mismatch drops the datagram (C returns 0).
+    fn udp_post_decrypt(&mut self, data: &[u8]) -> SsrResult<Vec<u8>> {
+        if data.len() <= 4 {
+            return Err(crate::error::SsrError::Protocol(
+                "auth_aes128: udp datagram too short".into(),
+            ));
+        }
+        let (msg, tag) = data.split_at(data.len() - 4);
+        let hash = (self.hmac_fn)(&self.server_info.key, msg);
+        if hash[..4] != *tag {
+            return Err(crate::error::SsrError::Protocol(
+                "auth_aes128: udp HMAC mismatch".into(),
+            ));
+        }
+        Ok(msg.to_vec())
     }
 
     fn client_post_decrypt(&mut self, data: &[u8]) -> SsrResult<Vec<u8>> {

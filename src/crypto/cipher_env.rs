@@ -1,5 +1,5 @@
 use crate::crypto::types::CipherType;
-use crate::error::SsrResult;
+use crate::error::{SsrError, SsrResult};
 use crate::crypto::bytes_to_key::bytes_to_key;
 use crate::crypto::table::TableCipher;
 use crate::crypto::aead::{AeadCipher, AeadDecryptCtx, AeadEncryptCtx};
@@ -299,6 +299,46 @@ impl CipherEnv {
                 if ciphertext.len() < iv_len { return Err(crate::error::SsrError::crypto(format!("Ciphertext too short"))); }
                 crate::crypto::stream::stream_decrypt(self.method, &self.key, &ciphertext[..iv_len], &ciphertext[iv_len..])
             }
+        }
+    }
+
+    /// One-shot UDP datagram encryption.
+    ///
+    /// Stream/table ciphers: fresh random IV per datagram, IV prefixed
+    /// (C: `ss_encrypt_all`). RC4 has `iv_len == 0`, so no IV — pure keystream.
+    /// AEAD: `salt || seal(nonce = 0, plaintext) || tag`, fresh random salt per
+    /// datagram, no chunk framing (C: `aead_encrypt_all`).
+    pub fn encrypt_udp(&self, plaintext: &[u8]) -> SsrResult<Vec<u8>> {
+        if AeadCipher::is_aead(self.method) {
+            let key_len = AeadCipher::key_len_of(self.method)
+                .ok_or_else(|| SsrError::crypto(format!("Cipher {:?} is not AEAD", self.method)))?;
+            let nonce_len = AeadCipher::nonce_len_of(self.method).unwrap_or(12);
+            let mut salt = vec![0u8; key_len];
+            rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut salt);
+            let cipher = AeadCipher::new_from_salt(self.method, &self.aead_master_key, &salt)?;
+            let sealed = cipher.seal(&vec![0u8; nonce_len], plaintext)?;
+            let mut out = salt;
+            out.extend_from_slice(&sealed);
+            Ok(out)
+        } else {
+            self.encrypt(plaintext)
+        }
+    }
+
+    /// One-shot UDP datagram decryption (inverse of [`encrypt_udp`]).
+    pub fn decrypt_udp(&self, ciphertext: &[u8]) -> SsrResult<Vec<u8>> {
+        if AeadCipher::is_aead(self.method) {
+            let key_len = AeadCipher::key_len_of(self.method)
+                .ok_or_else(|| SsrError::crypto(format!("Cipher {:?} is not AEAD", self.method)))?;
+            let nonce_len = AeadCipher::nonce_len_of(self.method).unwrap_or(12);
+            if ciphertext.len() <= key_len {
+                return Err(SsrError::crypto("AEAD UDP ciphertext too short".to_string()));
+            }
+            let (salt, body) = ciphertext.split_at(key_len);
+            let cipher = AeadCipher::new_from_salt(self.method, &self.aead_master_key, salt)?;
+            cipher.open(&vec![0u8; nonce_len], body)
+        } else {
+            self.decrypt(ciphertext)
         }
     }
 }
