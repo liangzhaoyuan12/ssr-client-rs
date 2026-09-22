@@ -17,6 +17,8 @@ impl Default for VerifySimple {
 }
 
 impl VerifySimple {
+    /// Fresh instance with a random-seeded XORShift128+ padding RNG.
+    /// C: verify_simple_new_obfs (ssr-n/src/obfs/verify.c:21).
     pub fn new() -> Self {
         use rand::RngCore;
         let mut seed = [0u8; 8];

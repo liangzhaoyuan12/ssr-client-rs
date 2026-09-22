@@ -16,6 +16,17 @@ type BlowfishCfbDec = cfb_mode::Decryptor<blowfish::Blowfish>;
 type DesCfbEnc = cfb_mode::Encryptor<des::Des>;
 type DesCfbDec = cfb_mode::Decryptor<des::Des>;
 
+/// One-shot stream-cipher encryption with an explicit key and IV.
+///
+/// `none` returns the plaintext unchanged; `rc4-md5`/`rc4-md5-6` fold the IV
+/// into the key as `md5(key || iv)` (C: `cipher_context_set_iv`,
+/// ssr-n/src/encrypt.c); for salsa20/chacha20 the IV is the nonce. The IV is
+/// not prepended to the output.
+///
+/// # Errors
+/// Returns `SsrError::Crypto` when the cipher rejects the key/IV lengths or
+/// when `method` is not a stream cipher (`table` and the AEAD methods reach
+/// this error arm).
 pub fn stream_encrypt(
     method: CipherType,
     key: &[u8],
@@ -126,6 +137,16 @@ pub fn stream_encrypt(
     }
 }
 
+/// One-shot stream-cipher decryption with an explicit key and IV.
+///
+/// Mirror of `stream_encrypt`: `rc4-md5`/`rc4-md5-6` derive
+/// `md5(key || iv)` first, `none` passes the bytes through, and the IV must be
+/// supplied separately because it is never read from `ciphertext`.
+///
+/// # Errors
+/// Returns `SsrError::Crypto` when the cipher rejects the key/IV lengths or
+/// when `method` is not a stream cipher (`table` and the AEAD methods reach
+/// this error arm).
 pub fn stream_decrypt(
     method: CipherType,
     key: &[u8],

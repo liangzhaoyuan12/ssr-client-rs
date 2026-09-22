@@ -12,11 +12,19 @@ use crate::config::SsrClientConfig;
 /// A parsed JSON value (only the subset needed for config files).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Json {
+    /// `null` literal.
     Null,
+    /// `true` or `false` literal.
     Bool(bool),
+    /// Number literal (JSON has a single numeric type; integers and floats
+    /// both land here and are range-checked on conversion).
     Num(f64),
+    /// String literal with JSON escapes already decoded.
     Str(String),
+    /// Array value (`[ ... ]`), elements kept in source order.
     Arr(Vec<Json>),
+    /// Object value (`{ ... }`) as ordered key/value pairs; `get` returns the
+    /// first entry when a key is duplicated.
     Obj(Vec<(String, Json)>),
 }
 
@@ -29,6 +37,7 @@ impl Json {
         }
     }
 
+    /// Interpret as a string: `Some` only for `Json::Str`, `None` otherwise.
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Json::Str(s) => Some(s),
@@ -36,6 +45,10 @@ impl Json {
         }
     }
 
+    /// Interpret as a port/`u16` config value: accepts an integral `f64` in
+    /// `0..=u16::MAX` or a decimal string; `None` for other variants, negative
+    /// or fractional numbers, or values that would saturate on cast.
+    /// Used for `server_port`/`listen_port` (cf. `ssr-n/src/config_json.c`).
     pub fn as_u16(&self) -> Option<u16> {
         match self {
             // Range-check: f64 -> u16 saturates in Rust (70000 would become
@@ -52,6 +65,10 @@ impl Json {
         }
     }
 
+    /// Interpret as a timeout/`u32` config value: accepts an integral `f64` in
+    /// `0..=u32::MAX` or a decimal string; `None` for other variants, negative
+    /// or fractional numbers, or values that would saturate on cast.
+    /// Used for `*_timeout` fields (cf. `ssr-n/src/config_json.c`).
     pub fn as_u32(&self) -> Option<u32> {
         match self {
             // Same saturation guard as as_u16 (negative -> 0, huge -> u32::MAX).
@@ -67,6 +84,8 @@ impl Json {
         }
     }
 
+    /// Interpret as a boolean: `Some` only for `Json::Bool`, `None` otherwise.
+    /// Used for the `udp` flag (cf. `ssr-n/src/config_json.c`).
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             Json::Bool(b) => Some(*b),

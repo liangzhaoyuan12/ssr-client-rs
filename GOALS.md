@@ -220,7 +220,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
   - 记录前后 `ls -lh target/release/ssr_client` 数值到 PROGRESS.md
   - 注意: `panic = "abort"` 不设（库 crate 交给下游决定）
 
-- [ ] Q7 公共 API 文档与示例
+- [x] Q7 公共 API 文档与示例（239 处 missing_docs 清零，`cargo doc --no-deps` 0 告警，examples/socks5.rs 实测跑通，2026-09-23）
   - `src/lib.rs` 加 `#![warn(missing_docs)]`，补全所有 pub 项的 doc comment
   - 文档注释必须写清: 语义、错误条件、与 C 的对应关系（协议层标注 C 函数名与文件行号）
   - 新增 `examples/socks5.rs`: 20 行内起一个可用的 SOCKS5 代理

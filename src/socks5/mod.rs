@@ -12,26 +12,38 @@ const SOCKS5_VERSION: u8 = 0x05;
 
 /// SOCKS5 commands
 pub const CMD_CONNECT: u8 = 0x01;
+/// BIND command (`0x02`, RFC 1928 §4): request a server-side listen socket.
 pub const CMD_BIND: u8 = 0x02;
+/// UDP ASSOCIATE command (`0x03`, RFC 1928 §4): establish a UDP relay.
 pub const CMD_UDP_ASSOCIATE: u8 = 0x03;
 
 /// SOCKS5 address types
 pub const ATYP_IPV4: u8 = 0x01;
+/// Domain name type (`0x03`, RFC 1928 §4.1): 1-byte length + name bytes.
 pub const ATYP_DOMAIN: u8 = 0x03;
+/// IPv6 address type (`0x04`, RFC 1928 §4.1): 16 raw address bytes.
 pub const ATYP_IPV6: u8 = 0x04;
 
 /// SOCKS5 reply codes
 pub const REP_SUCCESS: u8 = 0x00;
+/// REP `0x01`: general SOCKS server failure (RFC 1928 §6).
 pub const REP_GENERAL_FAILURE: u8 = 0x01;
+/// REP `0x02`: connection not allowed by ruleset (RFC 1928 §6).
 pub const REP_NOT_ALLOWED: u8 = 0x02;
+/// REP `0x03`: network unreachable (RFC 1928 §6).
 pub const REP_NETWORK_UNREACHABLE: u8 = 0x03;
+/// REP `0x04`: host unreachable (RFC 1928 §6).
 pub const REP_HOST_UNREACHABLE: u8 = 0x04;
+/// REP `0x05`: connection refused by the target (RFC 1928 §6).
 pub const REP_CONNECTION_REFUSED: u8 = 0x05;
+/// REP `0x07`: command not supported / bad protocol version (RFC 1928 §6).
 pub const REP_COMMAND_NOT_SUPPORTED: u8 = 0x07;
+/// REP `0x08`: address type not supported (RFC 1928 §6).
 pub const REP_ADDRESS_TYPE_NOT_SUPPORTED: u8 = 0x08;
 
 /// SOCKS5 authentication methods
 pub const AUTH_NONE: u8 = 0x00;
+/// X'FF' no acceptable methods (RFC 1928 §3): reject every offered method.
 pub const AUTH_REQUIRED: u8 = 0xFF;
 
 /// Parsed SOCKS5 method negotiation request from client.
@@ -61,8 +73,11 @@ pub struct ConnectRequest {
 /// Target address in a SOCKS5 request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TargetAddress {
+    /// IPv4 target: 4 raw network-order bytes (ATYP `0x01`).
     IPv4([u8; 4]),
+    /// IPv6 target: 16 raw network-order bytes (ATYP `0x04`).
     IPv6([u8; 16]),
+    /// Domain target: raw hostname bytes, length-prefixed on the wire (ATYP `0x03`).
     Domain(Vec<u8>),
 }
 

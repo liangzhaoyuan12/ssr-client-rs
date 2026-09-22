@@ -20,46 +20,72 @@ type BlowfishCfbDec = cfb_mode::BufDecryptor<blowfish::Blowfish>;
 type DesCfbEnc = cfb_mode::BufEncryptor<des::Des>;
 type DesCfbDec = cfb_mode::BufDecryptor<des::Des>;
 
+/// Stateful encryption context for one TCP stream, one variant per cipher
+/// family (C: `enc_ctx_new_instance`, ssr-n/src/encrypt.c).
 pub enum EncryptContext {
+    /// `none`: nothing is encrypted, the buffer passes through unchanged.
     None,
+    /// `table`: every byte is substituted through the password enc table.
     Table,
+    /// `rc4` stream cipher, keyed from the derived key only (no IV).
     RC4 {
+        /// Live RC4 keystream state.
         cipher: rc4::Rc4,
     },
+    /// `aes-128-cfb` stream cipher state (C: `ss_cipher_aes_128_cfb`, ssr_cipher_names.h).
     AES128CFB {
+        /// AES-128-CFB encryptor seeded with the per-stream IV.
         cipher: Aes128CfbEnc,
     },
+    /// `aes-192-cfb` stream cipher state (C: `ss_cipher_aes_192_cfb`, ssr_cipher_names.h).
     AES192CFB {
+        /// AES-192-CFB encryptor seeded with the per-stream IV.
         cipher: Aes192CfbEnc,
     },
+    /// `aes-256-cfb` stream cipher state (C: `ss_cipher_aes_256_cfb`, ssr_cipher_names.h).
     AES256CFB {
+        /// AES-256-CFB encryptor seeded with the per-stream IV.
         cipher: Aes256CfbEnc,
     },
+    /// `aes-128-ctr` stream cipher state (C: `ss_cipher_aes_128_ctr`, ssr_cipher_names.h).
     AES128CTR {
+        /// AES-128-CTR keystream generator seeded with the per-stream IV.
         cipher: Aes128Ctr,
     },
+    /// `aes-192-ctr` stream cipher state (C: `ss_cipher_aes_192_ctr`, ssr_cipher_names.h).
     AES192CTR {
+        /// AES-192-CTR keystream generator seeded with the per-stream IV.
         cipher: Aes192Ctr,
     },
+    /// `aes-256-ctr` stream cipher state (C: `ss_cipher_aes_256_ctr`, ssr_cipher_names.h).
     AES256CTR {
+        /// AES-256-CTR keystream generator seeded with the per-stream IV.
         cipher: Aes256Ctr,
     },
     /// Boxed: Blowfish carries ~4KB of S-box state (clippy large_enum_variant).
     BlowfishCFB {
+        /// Boxed Blowfish-CFB encryptor (~4 KB of S-box state).
         cipher: Box<BlowfishCfbEnc>,
     },
+    /// `des-cfb` stream cipher state (C: `ss_cipher_des_cfb`, ssr_cipher_names.h).
     DESCFB {
+        /// DES-CFB encryptor seeded with the per-stream IV.
         cipher: DesCfbEnc,
     },
+    /// `salsa20` stream cipher state (C: `ss_cipher_salsa20`, ssr_cipher_names.h).
     Salsa20 {
+        /// Salsa20 keystream generator seeded with the per-stream IV.
         cipher: salsa20::Salsa20,
     },
+    /// `chacha20-ietf` stream cipher state (C: `ss_cipher_chacha20ietf`, ssr_cipher_names.h).
     ChaCha20 {
+        /// ChaCha20-IETF keystream generator, 12-byte nonce.
         cipher: chacha20::ChaCha20,
     },
     /// Original (non-IETF) ChaCha20: 8-byte nonce, as libsodium
     /// crypto_stream_chacha20 used by C (encrypt.c:208-209).
     ChaCha20Legacy {
+        /// Original ChaCha20 state, 8-byte nonce.
         cipher: chacha20::ChaCha20Legacy,
     },
     /// AEAD streams replace the payload rather than transforming it in place,
@@ -68,43 +94,71 @@ pub enum EncryptContext {
     Aead(Box<AeadEncryptCtx>),
 }
 
+/// Stateful decryption context for one TCP stream, the mirror of
+/// `EncryptContext` (C: `enc_ctx_new_instance`, ssr-n/src/encrypt.c).
 pub enum DecryptContext {
+    /// `none`: nothing is decrypted, the buffer passes through unchanged.
     None,
+    /// `table`: every byte is substituted back through the password dec table.
     Table,
+    /// `rc4` stream cipher, keyed from the derived key only (no IV).
     RC4 {
+        /// Live RC4 keystream state.
         cipher: rc4::Rc4,
     },
+    /// `aes-128-cfb` stream cipher state (C: `ss_cipher_aes_128_cfb`, ssr_cipher_names.h).
     AES128CFB {
+        /// AES-128-CFB decryptor seeded with the IV read from the stream.
         cipher: Aes128CfbDec,
     },
+    /// `aes-192-cfb` stream cipher state (C: `ss_cipher_aes_192_cfb`, ssr_cipher_names.h).
     AES192CFB {
+        /// AES-192-CFB decryptor seeded with the IV read from the stream.
         cipher: Aes192CfbDec,
     },
+    /// `aes-256-cfb` stream cipher state (C: `ss_cipher_aes_256_cfb`, ssr_cipher_names.h).
     AES256CFB {
+        /// AES-256-CFB decryptor seeded with the IV read from the stream.
         cipher: Aes256CfbDec,
     },
+    /// `aes-128-ctr` stream cipher state (C: `ss_cipher_aes_128_ctr`, ssr_cipher_names.h).
     AES128CTR {
+        /// AES-128-CTR keystream generator seeded with the IV from the stream.
         cipher: Aes128Ctr,
     },
+    /// `aes-192-ctr` stream cipher state (C: `ss_cipher_aes_192_ctr`, ssr_cipher_names.h).
     AES192CTR {
+        /// AES-192-CTR keystream generator seeded with the IV from the stream.
         cipher: Aes192Ctr,
     },
+    /// `aes-256-ctr` stream cipher state (C: `ss_cipher_aes_256_ctr`, ssr_cipher_names.h).
     AES256CTR {
+        /// AES-256-CTR keystream generator seeded with the IV from the stream.
         cipher: Aes256Ctr,
     },
+    /// `bf-cfb` Blowfish-CFB stream cipher state (C: `ss_cipher_bf_cfb`, ssr_cipher_names.h).
     BlowfishCFB {
+        /// Boxed Blowfish-CFB decryptor (~4 KB of S-box state).
         cipher: Box<BlowfishCfbDec>,
     },
+    /// `des-cfb` stream cipher state (C: `ss_cipher_des_cfb`, ssr_cipher_names.h).
     DESCFB {
+        /// DES-CFB decryptor seeded with the IV read from the stream.
         cipher: DesCfbDec,
     },
+    /// `salsa20` stream cipher state (C: `ss_cipher_salsa20`, ssr_cipher_names.h).
     Salsa20 {
+        /// Salsa20 keystream generator seeded with the IV from the stream.
         cipher: salsa20::Salsa20,
     },
+    /// `chacha20-ietf` stream cipher state (C: `ss_cipher_chacha20ietf`, ssr_cipher_names.h).
     ChaCha20 {
+        /// ChaCha20-IETF keystream generator, 12-byte nonce.
         cipher: chacha20::ChaCha20,
     },
+    /// `chacha20` method: original ChaCha20 with an 8-byte nonce.
     ChaCha20Legacy {
+        /// Original ChaCha20 state, 8-byte nonce.
         cipher: chacha20::ChaCha20Legacy,
     },
     /// Boxed for the same size reason as `EncryptContext::Aead`.
@@ -209,6 +263,8 @@ fn decrypt_in_place(ctx: &mut DecryptContext, output: &mut [u8]) -> SsrResult<()
     Ok(())
 }
 
+/// Per-connection cipher environment: derived key, IV length, IV replay
+/// cache and AEAD master key (C: `struct cipher_env_t`, ssr-n/src/encrypt.c).
 pub struct CipherEnv {
     method: CipherType,
     /// Cipher key reported to the obfs/protocol layers. For AEAD this is EMPTY:
@@ -222,11 +278,26 @@ pub struct CipherEnv {
 }
 
 impl CipherEnv {
+    /// Build a cipher environment from a password and a method-name string.
+    ///
+    /// # Errors
+    /// Returns `SsrError::InvalidCipherMethod` when `method_name` is not one of the
+    /// method names listed in `ssr_cipher_names.h`.
     pub fn new(password: &str, method_name: &str) -> SsrResult<Self> {
         let method = CipherType::from_name(method_name)?;
         Self::with_method(password, method)
     }
 
+    /// Build a cipher environment for an already parsed `CipherType`.
+    ///
+    /// Stream methods derive the key with `bytes_to_key`, `table` builds the
+    /// substitution tables from the password and the AEAD methods keep only the
+    /// HKDF master key (C: `enc_key_init` / `cipher_env_new_instance`,
+    /// ssr-n/src/encrypt.c).
+    ///
+    /// # Errors
+    /// Returns `SsrError::InvalidCipherMethod` if an AEAD method has no key length
+    /// in `AeadCipher::key_len_of` (defensive: every known AEAD method has one).
     pub fn with_method(password: &str, method: CipherType) -> SsrResult<Self> {
         match method {
             CipherType::None => Ok(Self {
@@ -285,20 +356,40 @@ impl CipherEnv {
         }
     }
 
+    /// The cipher method this environment was built for.
     pub fn method(&self) -> CipherType {
         self.method
     }
+    /// Cipher key reported to the obfs/protocol layers (C: `enc_get_key_len`,
+    /// ssr-n/src/encrypt.c): the password bytes for `table`, and empty for `none`
+    /// and for every AEAD method.
     pub fn key(&self) -> &[u8] {
         &self.key
     }
+    /// IV length reported to the obfs/protocol layers (C: `enc_get_iv_len`,
+    /// ssr-n/src/encrypt.c); 0 for `none`, `table` and the AEAD methods.
     pub fn iv_len(&self) -> usize {
         self.iv_len
     }
 
+    /// Replay guard for incoming IVs: returns `true` when `iv` is seen for the
+    /// first time and `false` when it was already used by an earlier packet.
+    ///
+    /// Mirrors the `iv_cache` lookup in `ss_decrypt` (ssr-n/src/encrypt.c), where
+    /// a repeated IV makes decryption fail with an error.
     pub fn check_iv(&mut self, iv: &[u8]) -> bool {
         self.iv_cache.insert(iv.to_vec())
     }
 
+    /// Create a stateful encryption context together with the IV to transmit.
+    ///
+    /// Stream methods get a fresh random `iv_len`-byte IV; AEAD methods get a
+    /// random salt that the context emits itself and report an empty IV, matching
+    /// `enc_ctx_new_instance` (ssr-n/src/encrypt.c).
+    ///
+    /// # Errors
+    /// Returns `SsrError::Crypto` when a cipher fails to initialise, and
+    /// `SsrError::InvalidCipherMethod` when an AEAD method has no key length.
     pub fn create_encrypt_ctx(&self) -> SsrResult<(EncryptContext, Vec<u8>)> {
         if AeadCipher::is_aead(self.method) {
             // The AEAD context emits and manages its own salt, and the C code
@@ -399,6 +490,17 @@ impl CipherEnv {
         })
     }
 
+    /// Encrypt one TCP segment with an existing context.
+    ///
+    /// AEAD contexts frame and seal the payload themselves (they change its
+    /// length, C: `aead_encrypt` in ssr-n/src/aead.c), `table` maps every byte
+    /// through `enc_table`, and the remaining methods transform the buffer in
+    /// place as `ss_encrypt` does (ssr-n/src/encrypt.c). `_is_first` is unused and
+    /// kept only for symmetry with the C call sites.
+    ///
+    /// # Errors
+    /// Returns `SsrError::Crypto` when AEAD sealing fails; the stream and `table`
+    /// paths cannot fail.
     pub fn encrypt_ctx(
         &self,
         ctx: &mut EncryptContext,
@@ -421,6 +523,15 @@ impl CipherEnv {
         Ok(output)
     }
 
+    /// Split `ciphertext` into IV and body and build the decryption context.
+    ///
+    /// The leading `iv_len` bytes are consumed as the IV, as in `ss_decrypt`
+    /// (ssr-n/src/encrypt.c); AEAD consumes nothing and buffers the whole input
+    /// until its salt has arrived, because the salt may span several packets.
+    ///
+    /// # Errors
+    /// Returns `SsrError::Crypto` when the ciphertext is shorter than the IV or
+    /// when a cipher fails to initialise.
     pub fn create_decrypt_ctx_from_ciphertext(
         &self,
         ciphertext: &[u8],
@@ -524,6 +635,13 @@ impl CipherEnv {
         })
     }
 
+    /// Decrypt one TCP segment with an existing context (inverse of
+    /// `encrypt_ctx`).
+    ///
+    /// # Errors
+    /// Returns `SsrError::Crypto` when AEAD authentication fails, when a chunk
+    /// length or payload is malformed, or when the method cannot be decrypted;
+    /// the stream and `table` paths cannot fail.
     pub fn decrypt_ctx(&self, ctx: &mut DecryptContext, ciphertext: &[u8]) -> SsrResult<Vec<u8>> {
         if let DecryptContext::Aead(d) = ctx {
             return d.decrypt(ciphertext);
@@ -539,6 +657,13 @@ impl CipherEnv {
         Ok(output)
     }
 
+    /// One-shot encryption without a persistent context: stream methods prefix a
+    /// fresh random IV, `table` maps bytes through `enc_table` and `none` copies
+    /// the input (C: `ss_encrypt_all`, ssr-n/src/encrypt.c).
+    ///
+    /// # Errors
+    /// Returns `SsrError::Crypto` for AEAD methods (they require an encrypt
+    /// context) and for ciphers `stream_encrypt` does not support.
     pub fn encrypt(&self, plaintext: &[u8]) -> SsrResult<Vec<u8>> {
         match self.method {
             CipherType::None => Ok(plaintext.to_vec()),
@@ -568,6 +693,13 @@ impl CipherEnv {
         }
     }
 
+    /// One-shot decryption, the inverse of `encrypt`: strips the leading IV and
+    /// decrypts, `table` maps bytes through `dec_table` and `none` copies the
+    /// input (C: `ss_decrypt_all`, ssr-n/src/encrypt.c).
+    ///
+    /// # Errors
+    /// Returns `SsrError::Crypto` when the ciphertext is shorter than the IV, for
+    /// AEAD methods, and when the underlying cipher fails.
     pub fn decrypt(&self, ciphertext: &[u8]) -> SsrResult<Vec<u8>> {
         match self.method {
             CipherType::None => Ok(ciphertext.to_vec()),
@@ -621,7 +753,7 @@ impl CipherEnv {
         }
     }
 
-    /// One-shot UDP datagram decryption (inverse of [`encrypt_udp`]).
+    /// One-shot UDP datagram decryption (inverse of [`Self::encrypt_udp`]).
     pub fn decrypt_udp(&self, ciphertext: &[u8]) -> SsrResult<Vec<u8>> {
         if AeadCipher::is_aead(self.method) {
             let key_len = AeadCipher::key_len_of(self.method)

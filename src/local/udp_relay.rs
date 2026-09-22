@@ -62,6 +62,9 @@ fn parse_ss_payload(payload: &[u8]) -> SsrResult<crate::socks5::UdpDatagram> {
     parse_udp_datagram(&tmp)
 }
 
+/// App-facing UDP relay: receives SOCKS5 UDP ASSOCIATE datagrams on the listen
+/// port, encrypts payloads per SSR session and forwards them to the server
+/// (Rust port of `ssr-n/src/udp_ssr_client.c`; see the module docs).
 pub struct UdpRelay {
     listener: Arc<UdpSocket>,
     server: SocketAddr,

@@ -7,6 +7,9 @@ use crate::utils::hash::hmac_sha1;
 const PACK_UNIT_SIZE: usize = 2000;
 const HMAC_SHA1_LEN: usize = 10;
 
+/// `auth_sha1` — Adler32-framed data packets; the first sent packet is
+/// an auth header (CRC32 + timestamp + client/connection id) guarded by a
+/// 10-byte HMAC-SHA1. C: auth_sha1_new_obfs (ssr-n/src/obfs/auth.c:104).
 pub struct AuthSHA1 {
     has_sent_header: bool,
     has_recv_header: bool,
@@ -17,6 +20,9 @@ pub struct AuthSHA1 {
 }
 
 impl AuthSHA1 {
+    /// Fresh instance with a random-seeded XORShift128+ padding RNG and
+    /// no header sent or received yet. C: auth_sha1_new_obfs
+    /// (ssr-n/src/obfs/auth.c:104).
     pub fn new(server_info: ServerInfo) -> Self {
         use rand::RngCore;
         let mut seed = [0u8; 8];

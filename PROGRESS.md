@@ -355,3 +355,28 @@
   UDP e2e ALL_PASS、clippy -D rc=0、fmt 0、panic 脚本 rc=0、
   release 0 warning、二进制冒烟启动正常（读 hk.json 监听 1080）
 - 注: thin LTO + CGU=1 改变了全部 crate 的编译指纹，release 全量重建耗时明显变长（本机约 1 分钟级），属预期
+
+### ✅ Q7 公共 API 文档与示例（2026-09-23）
+
+- **`#![warn(missing_docs)]`** 加入 src/lib.rs（配合 [lints.rust] warnings=deny，
+  缺文档即构建失败，基线 **239 处**）
+- **239 → 0**，3 个并行子任务分片完成（crypto 133 / protocol 47 / 其余 59）:
+  - crypto: 方法写语义 + `# Errors` + C 对应（enc_table_init/enc_ctx_new_instance/
+    cipher_context_set_iv/create_aead_cipher_ctx/ss_encrypt_all…），枚举变体带线上
+    方法名字符串（aes-256-cfb → ss_cipher_*、ssr_cipher_names.h）
+  - protocol: 结构体/new/字段 + C 对应（auth_chain.c:1087、auth.c:1601-1624、
+    obfsutil.c:35-44 xorshift128plus…，行号均实测标注）
+  - lib/socks5/config_json/utils/error/obfs/local: crate 级 `//!` 总览、SOCKS5
+    常量字节语义引 RFC1928 §3/§4/§6、Json 取值访问器错误条件、SsrError 各变体
+    产生条件
+  - 全部为**纯新增**（git diff: +N/−0），doc 行 ≤100 字符
+- **修 1 处坏 intra-doc link**: `decrypt_udp` 的 `[`encrypt_udp`]` →
+  `[`Self::encrypt_udp`]`（rustdoc broken-intra-doc-links 在 -D warnings 下报错）
+- **完成标准**:
+  1. `cargo doc --no-deps` **exit 0、0 warning** ✓
+  2. `cargo build --example socks5` 通过；实测
+     `./target/debug/examples/socks5 hk.json` 打印
+     `SOCKS5 listening on 0.0.0.0:1080 -> SSR 192.0.2.1:2800`，
+     SIGINT 优雅退出 exit=0 ✓
+- **回归全绿**: cargo build/test 237-0、clippy -D rc=0、fmt 0、
+  panic 脚本 rc=0、矩阵 39/51+12SKIP 0 FAIL、UDP e2e ALL_PASS、resilience 4/4

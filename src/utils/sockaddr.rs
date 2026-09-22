@@ -4,7 +4,9 @@ use std::str::FromStr;
 /// Universal sockaddr type for SSR
 #[derive(Debug, Clone)]
 pub enum SockAddr {
+    /// IPv4 address with port.
     IPv4(std::net::Ipv4Addr, u16),
+    /// IPv6 address with port.
     IPv6(std::net::Ipv6Addr, u16),
 }
 

@@ -86,6 +86,11 @@ pub struct Tls12TicketAuthObfs {
 }
 
 impl Tls12TicketAuthObfs {
+    /// Create a `tls1.2_ticket_auth` obfs for `server_host` (`_server_port` is
+    /// unused: the C obfs HMACs host + client_id only, never the port).
+    /// `fastauth` selects `tls1.2_ticket_fastauth`, which sends ClientHello +
+    /// Finished back-to-back instead of awaiting the server response
+    /// (mirrors `ssr-n/src/obfs/tls1.2_ticket.c`).
     pub fn new(
         server_host: String,
         _server_port: u16,
@@ -113,6 +118,7 @@ impl Tls12TicketAuthObfs {
         &self.client_id
     }
 
+    /// Store the key used to pack the ClientHello auth data (Obfs::set_key).
     pub fn set_key(&mut self, key: Vec<u8>) {
         self.key = key;
     }

@@ -9,6 +9,12 @@ pub struct TableCipher {
 }
 
 impl TableCipher {
+    /// Build both 256-byte substitution tables from `password`.
+    ///
+    /// The table key is the sum of the first 8 MD5 digest bytes shifted into a
+    /// `u64`; the identity table is then shuffled by 1023 salted merge-sort passes
+    /// and `dec_table` is built as the inverse of `enc_table` (C:
+    /// `enc_table_init`, ssr-n/src/encrypt.c).
     pub fn new(password: &[u8]) -> Self {
         let digest = md5(password);
 
@@ -37,10 +43,14 @@ impl TableCipher {
         }
     }
 
+    /// Substitute every byte through `enc_table`, byte for byte like the `table`
+    /// branch of `ss_encrypt_all` (ssr-n/src/encrypt.c).
     pub fn encrypt(&self, data: &[u8]) -> Vec<u8> {
         data.iter().map(|&b| self.enc_table[b as usize]).collect()
     }
 
+    /// Substitute every byte back through `dec_table`, byte for byte like the
+    /// `table` branch of `ss_decrypt_all` (ssr-n/src/encrypt.c).
     pub fn decrypt(&self, data: &[u8]) -> Vec<u8> {
         data.iter().map(|&b| self.dec_table[b as usize]).collect()
     }

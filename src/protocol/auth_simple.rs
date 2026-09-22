@@ -20,6 +20,9 @@ impl Default for AuthSimple {
 }
 
 impl AuthSimple {
+    /// Fresh instance with a random-seeded XORShift128+ padding RNG and
+    /// no header sent or received yet. C: auth_simple_new_obfs
+    /// (ssr-n/src/obfs/auth.c:85).
     pub fn new() -> Self {
         use rand::RngCore;
         let mut seed = [0u8; 8];

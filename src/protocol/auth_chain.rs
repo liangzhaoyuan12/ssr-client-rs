@@ -296,6 +296,10 @@ struct AuthChainAContext {
     rand_len_ctx: RandLenCtx,
 }
 
+/// `auth_chain_a` — HMAC-SHA1 chained protocol: the first packet carries
+/// an auth header, later packets chain the previous 16-byte hash, and the
+/// UDP hooks are registered here only. C: auth_chain_a_new_obfs
+/// (ssr-n/src/obfs/auth_chain.c:241).
 pub struct AuthChainA {
     global: GlobalData,
     server_info: ServerInfo,
@@ -303,6 +307,9 @@ pub struct AuthChainA {
 }
 
 impl AuthChainA {
+    /// Fresh instance whose 32-byte random seed is split between the
+    /// client and server XORShift128+ streams. C: auth_chain_a_new_obfs
+    /// (ssr-n/src/obfs/auth_chain.c:241).
     pub fn new(server_info: ServerInfo, salt: &'static str) -> Self {
         use rand::RngCore;
         let mut seed = [0u8; 32];
@@ -818,11 +825,16 @@ struct AuthChainBContext {
     data_size_list2: Vec<i32>,
 }
 
+/// `auth_chain_b` — `auth_chain_a` with the b rand_len variant: two
+/// sorted random data-size lists derived from the server key.
 pub struct AuthChainB {
     inner: AuthChainA,
 }
 
 impl AuthChainB {
+    /// `auth_chain_a` core with the b rand_len callback and its two
+    /// data-size lists installed. C: auth_chain_b_new_obfs
+    /// (ssr-n/src/obfs/auth_chain.c:1087).
     pub fn new(server_info: ServerInfo) -> Self {
         // C: auth_chain_b_new_obfs = auth_chain_a_new_obfs() + swap
         // get_tcp_rand_len/salt + subclass_context; pre/post encrypt are the
@@ -894,11 +906,15 @@ struct AuthChainCContext {
     data_size_list0: Vec<i32>,
 }
 
+/// `auth_chain_c` — `auth_chain_a` with the c rand_len variant built on
+/// one sorted `data_size_list0` derived from the server key.
 pub struct AuthChainC {
     inner: AuthChainA,
 }
 
 impl AuthChainC {
+    /// `auth_chain_a` core with the c rand_len callback installed.
+    /// C: auth_chain_c_new_obfs (ssr-n/src/obfs/auth_chain.c:1211).
     pub fn new(server_info: ServerInfo) -> Self {
         // C: auth_chain_c_new_obfs = auth_chain_a_new_obfs() + swap
         // get_tcp_rand_len/salt + subclass_context; generic pre/post encrypt.
@@ -958,11 +974,15 @@ impl Protocol for AuthChainC {
 // E: uses find_pos to get minimum size
 // F: uses time-based key for data_size_list initialization
 
+/// `auth_chain_d` — like C, but the data-size list keeps growing until
+/// its last element is >= 1300 (at most 64 entries).
 pub struct AuthChainD {
     inner: AuthChainA,
 }
 
 impl AuthChainD {
+    /// `auth_chain_a` core with the d rand_len callback installed.
+    /// C: auth_chain_d_new_obfs (ssr-n/src/obfs/auth_chain.c:1304).
     pub fn new(server_info: ServerInfo) -> Self {
         // C: auth_chain_d_new_obfs = auth_chain_c_new_obfs() + swap
         // get_tcp_rand_len/salt; generic pre/post encrypt.
@@ -1037,11 +1057,16 @@ impl Protocol for AuthChainD {
     }
 }
 
+/// `auth_chain_e` — like D: reuses D's data-size list initialization
+/// with the e rand_len callback.
 pub struct AuthChainE {
     inner: AuthChainA,
 }
 
 impl AuthChainE {
+    /// `auth_chain_a` core reusing `AuthChainD::init_data_size` for the
+    /// e rand_len callback. C: auth_chain_e_new_obfs
+    /// (ssr-n/src/obfs/auth_chain.c:1395).
     pub fn new(server_info: ServerInfo) -> Self {
         // C: auth_chain_e_new_obfs = auth_chain_d_new_obfs() + swap
         // get_tcp_rand_len/salt (E reuses D's init_data_size); generic
@@ -1086,11 +1111,17 @@ impl Protocol for AuthChainE {
     }
 }
 
+/// `auth_chain_f` — like E, but the data-size list key rotates on a
+/// time interval parsed from the extra parameter.
 pub struct AuthChainF {
     inner: AuthChainA,
 }
 
 impl AuthChainF {
+    /// `auth_chain_a` core whose data-size key rotates over time; the
+    /// interval comes from `extra_param` (default 1 day). C:
+    /// auth_chain_f_new_obfs (ssr-n/src/obfs/auth_chain.c:1436) with
+    /// auth_chain_f_set_server_info (ssr-n/src/obfs/auth_chain.c:1500-1518).
     pub fn new(server_info: ServerInfo, extra_param: &str) -> Self {
         // C: auth_chain_f_new_obfs = auth_chain_e_new_obfs() + swap salt
         // (F inherits E's get_tcp_rand_len; only the data_size_list0 init key

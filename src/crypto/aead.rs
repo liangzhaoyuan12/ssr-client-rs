@@ -74,10 +74,17 @@ fn increment_le(nonce: &mut [u8]) {
 
 /// An initialised AEAD cipher.
 pub enum AeadCipher {
+    /// `aes-128-gcm` AEAD cipher, 16-byte key, 12-byte nonce (C: `ss_cipher_aes_128_gcm`).
     Aes128Gcm(Box<aes_gcm::Aes128Gcm>),
+    /// `aes-192-gcm` AEAD cipher, 24-byte key, 12-byte nonce (C: `ss_cipher_aes_192_gcm`).
     Aes192Gcm(Box<Aes192Gcm>),
+    /// `aes-256-gcm` AEAD cipher, 32-byte key, 12-byte nonce (C: `ss_cipher_aes_256_gcm`).
     Aes256Gcm(Box<aes_gcm::Aes256Gcm>),
+    /// `chacha20-ietf-poly1305` AEAD cipher, 32-byte key, 12-byte nonce.
+    /// C: `ss_cipher_chacha20_ietf_poly1305` (ssr-n/src/ssr_cipher_names.h).
     ChaCha20Poly1305(Box<chacha20poly1305::ChaCha20Poly1305>),
+    /// `xchacha20-ietf-poly1305` AEAD cipher, 32-byte key, 24-byte nonce.
+    /// C: `ss_cipher_xchacha20_ietf_poly1305` (ssr-n/src/ssr_cipher_names.h).
     XChaCha20Poly1305(Box<chacha20poly1305::XChaCha20Poly1305>),
 }
 
@@ -249,6 +256,12 @@ pub struct AeadEncryptCtx {
 }
 
 impl AeadEncryptCtx {
+    /// Create an encrypting context with a fresh random `key_len`-byte salt and a
+    /// zero nonce (C: `create_aead_cipher_ctx`, ssr-n/src/aead.c).
+    ///
+    /// # Errors
+    /// Returns `SsrError::Crypto` when `method` is not an AEAD cipher, i.e. when it
+    /// has no master-key (salt) length.
     pub fn new(method: CipherType, master_key: &[u8]) -> SsrResult<Self> {
         let key_len = AeadCipher::key_len_of(method)
             .ok_or_else(|| SsrError::crypto(format!("Cipher {method:?} is not an AEAD cipher")))?;
@@ -319,6 +332,12 @@ pub struct AeadDecryptCtx {
 }
 
 impl AeadDecryptCtx {
+    /// Create a decrypting context; the salt is read from the stream later, so
+    /// nothing is consumed here (C: `create_aead_cipher_ctx`, ssr-n/src/aead.c).
+    ///
+    /// # Errors
+    /// Returns `SsrError::Crypto` when `method` is not an AEAD cipher, i.e. when it
+    /// has no master-key (salt) length.
     pub fn new(method: CipherType, master_key: &[u8]) -> SsrResult<Self> {
         let key_len = AeadCipher::key_len_of(method)
             .ok_or_else(|| SsrError::crypto(format!("Cipher {method:?} is not an AEAD cipher")))?;

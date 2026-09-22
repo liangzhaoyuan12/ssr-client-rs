@@ -3,33 +3,63 @@ use crate::error::{SsrError, SsrResult};
 /// Encryption method type (28 methods)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CipherType {
-    None,                  // 0
-    Table,                 // 1
-    RC4,                   // 2
-    RC4Md56,               // 3: rc4-md5-6
-    RC4Md5,                // 4: rc4-md5
-    AES128CFB,             // 5
-    AES192CFB,             // 6
-    AES256CFB,             // 7
-    AES128CTR,             // 8
-    AES192CTR,             // 9
-    AES256CTR,             // 10
-    BFCFB,                 // 11: bf-cfb (Blowfish)
-    Camellia128CFB,        // 12
-    Camellia192CFB,        // 13
-    Camellia256CFB,        // 14
-    CAST5CFB,              // 15
-    DESCFB,                // 16
-    IDEACFB,               // 17
-    RC2CFB,                // 18
-    SeedCFB,               // 19
-    Salsa20,               // 20
-    ChaCha20,              // 21
-    ChaCha20IETF,          // 22
-    AES128GCM,             // 23
-    AES192GCM,             // 24
-    AES256GCM,             // 25
-    ChaCha20Poly1305IETF,  // 26
+    /// `none`: no encryption, bytes pass through unchanged (C: `ss_cipher_none`).
+    None, // 0
+    /// `table`: password-derived byte substitution cipher (C: `ss_cipher_table`).
+    Table, // 1
+    /// `rc4` stream cipher, key only, zero-length IV (C: `ss_cipher_rc4`).
+    RC4, // 2
+    /// `rc4-md5-6` RC4 variant, true key = md5(key || iv), 6-byte IV.
+    /// C: `ss_cipher_rc4_md5_6` (ssr-n/src/ssr_cipher_names.h).
+    RC4Md56, // 3: rc4-md5-6
+    /// `rc4-md5` RC4 variant, true key = md5(key || iv), 16-byte IV.
+    /// C: `ss_cipher_rc4_md5` (ssr-n/src/ssr_cipher_names.h).
+    RC4Md5, // 4: rc4-md5
+    /// `aes-128-cfb` stream cipher (C: `ss_cipher_aes_128_cfb`, ssr_cipher_names.h).
+    AES128CFB, // 5
+    /// `aes-192-cfb` stream cipher (C: `ss_cipher_aes_192_cfb`, ssr_cipher_names.h).
+    AES192CFB, // 6
+    /// `aes-256-cfb` stream cipher (C: `ss_cipher_aes_256_cfb`, ssr_cipher_names.h).
+    AES256CFB, // 7
+    /// `aes-128-ctr` stream cipher (C: `ss_cipher_aes_128_ctr`, ssr_cipher_names.h).
+    AES128CTR, // 8
+    /// `aes-192-ctr` stream cipher (C: `ss_cipher_aes_192_ctr`, ssr_cipher_names.h).
+    AES192CTR, // 9
+    /// `aes-256-ctr` stream cipher (C: `ss_cipher_aes_256_ctr`, ssr_cipher_names.h).
+    AES256CTR, // 10
+    /// `bf-cfb` Blowfish-CFB stream cipher (C: `ss_cipher_bf_cfb`, ssr_cipher_names.h).
+    BFCFB, // 11: bf-cfb (Blowfish)
+    /// `camellia-128-cfb` stream cipher (C: `ss_cipher_camellia_128_cfb`, ssr_cipher_names.h).
+    Camellia128CFB, // 12
+    /// `camellia-192-cfb` stream cipher (C: `ss_cipher_camellia_192_cfb`, ssr_cipher_names.h).
+    Camellia192CFB, // 13
+    /// `camellia-256-cfb` stream cipher (C: `ss_cipher_camellia_256_cfb`, ssr_cipher_names.h).
+    Camellia256CFB, // 14
+    /// `cast5-cfb` CAST5-CFB stream cipher (C: `ss_cipher_cast5_cfb`, ssr_cipher_names.h).
+    CAST5CFB, // 15
+    /// `des-cfb` DES-CFB stream cipher (C: `ss_cipher_des_cfb`, ssr_cipher_names.h).
+    DESCFB, // 16
+    /// `idea-cfb` IDEA-CFB stream cipher (C: `ss_cipher_idea_cfb`, ssr_cipher_names.h).
+    IDEACFB, // 17
+    /// `rc2-cfb` RC2-CFB stream cipher (C: `ss_cipher_rc2_cfb`, ssr_cipher_names.h).
+    RC2CFB, // 18
+    /// `seed-cfb` SEED-CFB stream cipher (C: `ss_cipher_seed_cfb`, ssr_cipher_names.h).
+    SeedCFB, // 19
+    /// `salsa20` stream cipher, 8-byte IV (C: `ss_cipher_salsa20`, ssr_cipher_names.h).
+    Salsa20, // 20
+    /// `chacha20` stream cipher, original 8-byte nonce (C: `ss_cipher_chacha20`, ssr_cipher_names.h).
+    ChaCha20, // 21
+    /// `chacha20-ietf` stream cipher, 12-byte nonce (C: `ss_cipher_chacha20ietf`, ssr_cipher_names.h).
+    ChaCha20IETF, // 22
+    /// `aes-128-gcm` AEAD cipher, 12-byte nonce (C: `ss_cipher_aes_128_gcm`, ssr_cipher_names.h).
+    AES128GCM, // 23
+    /// `aes-192-gcm` AEAD cipher, 12-byte nonce (C: `ss_cipher_aes_192_gcm`, ssr_cipher_names.h).
+    AES192GCM, // 24
+    /// `aes-256-gcm` AEAD cipher, 12-byte nonce (C: `ss_cipher_aes_256_gcm`, ssr_cipher_names.h).
+    AES256GCM, // 25
+    /// `chacha20-ietf-poly1305` AEAD cipher, 12-byte nonce (C: ssr_cipher_names.h).
+    ChaCha20Poly1305IETF, // 26
+    /// `xchacha20-ietf-poly1305` AEAD cipher, 24-byte nonce (C: ssr_cipher_names.h).
     XChaCha20Poly1305IETF, // 27
 }
 
@@ -207,20 +237,48 @@ impl CipherType {
 /// Protocol type (14 methods)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProtocolType {
-    Origin,         // 0
-    VerifySimple,   // 1
-    AuthSimple,     // 3
-    AuthSHA1,       // 4
-    AuthSHA1V2,     // 5
-    AuthSHA1V4,     // 6
-    AuthAES128MD5,  // 7
+    /// `origin` protocol: no protocol layer, the payload is untouched.
+    /// C: `ssr_protocol_origin` (ssr-n/src/ssr_cipher_names.h).
+    Origin, // 0
+    /// `verify_simple` protocol: length-prefixed units with random padding and CRC32.
+    /// C: `verify_simple_new_obfs` (ssr-n/src/obfs/verify.c).
+    VerifySimple, // 1
+    /// `auth_simple` protocol: unit packing with a one-time auth header.
+    /// C: `auth_simple_new_obfs` (ssr-n/src/obfs/auth.c).
+    AuthSimple, // 3
+    /// `auth_sha1` protocol: unit packing with a SHA1-based auth tag.
+    /// C: `auth_sha1_new_obfs` (ssr-n/src/obfs/auth.c).
+    AuthSHA1, // 4
+    /// `auth_sha1_v2` protocol: SHA1 auth variant built on auth_simple.
+    /// C: `auth_sha1_v2_new_obfs` (ssr-n/src/obfs/auth.c).
+    AuthSHA1V2, // 5
+    /// `auth_sha1_v4` protocol: SHA1 auth variant with salt `auth_sha1_v4`.
+    /// C: `auth_sha1_v4_new_obfs` (ssr-n/src/obfs/auth.c).
+    AuthSHA1V4, // 6
+    /// `auth_aes128_md5` protocol: auth_aes128 variant hashed with MD5.
+    /// C: `auth_aes128_md5_new_obfs` (ssr-n/src/obfs/auth.c).
+    AuthAES128MD5, // 7
+    /// `auth_aes128_sha1` protocol: auth_aes128 variant hashed with SHA1.
+    /// C: `auth_aes128_sha1_new_obfs` (ssr-n/src/obfs/auth.c).
     AuthAES128SHA1, // 8
-    AuthChainA,     // 9
-    AuthChainB,     // 10
-    AuthChainC,     // 11
-    AuthChainD,     // 12
-    AuthChainE,     // 13
-    AuthChainF,     // 14
+    /// `auth_chain_a` protocol: chained packet auth, base of the chain family.
+    /// C: `auth_chain_a_new_obfs` (ssr-n/src/obfs/auth_chain.c).
+    AuthChainA, // 9
+    /// `auth_chain_b` protocol: auth_chain_a with its own random-length rule and
+    /// subclass context. C: `auth_chain_b_new_obfs` (ssr-n/src/obfs/auth_chain.c).
+    AuthChainB, // 10
+    /// `auth_chain_c` protocol: auth_chain_a with its own random-length rule and
+    /// subclass context. C: `auth_chain_c_new_obfs` (ssr-n/src/obfs/auth_chain.c).
+    AuthChainC, // 11
+    /// `auth_chain_d` protocol: auth_chain_c with a different random-length rule.
+    /// C: `auth_chain_d_new_obfs` (ssr-n/src/obfs/auth_chain.c).
+    AuthChainD, // 12
+    /// `auth_chain_e` protocol: auth_chain_d with its own random-length rule.
+    /// C: `auth_chain_e_new_obfs` (ssr-n/src/obfs/auth_chain.c).
+    AuthChainE, // 13
+    /// `auth_chain_f` protocol: final chain variant, built on auth_chain_e.
+    /// C: `auth_chain_f_new_obfs` (ssr-n/src/obfs/auth_chain.c).
+    AuthChainF, // 14
 }
 
 impl ProtocolType {
@@ -269,11 +327,23 @@ impl ProtocolType {
 /// Obfuscation type (6 methods)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ObfsType {
-    Plain,               // 0
-    HTTPSimple,          // 1
-    HTTPPost,            // 2
-    HTTPMix,             // 3
-    TLS12TicketAuth,     // 4
+    /// `plain` obfs: no transport obfuscation at all.
+    /// C: `ssr_obfs_plain` (ssr-n/src/ssr_cipher_names.h); the factory builds no obfs object.
+    Plain, // 0
+    /// `http_simple` obfs: payload hidden inside an HTTP request.
+    /// C: `http_simple_new_obfs` (ssr-n/src/obfs/http_simple.c).
+    HTTPSimple, // 1
+    /// `http_post` obfs: payload hidden inside an HTTP POST body.
+    /// C: `http_post_new_obfs` (ssr-n/src/obfs/http_simple.c).
+    HTTPPost, // 2
+    /// `http_mix` obfs: randomly picks http_post (1 in 3..7) else http_simple.
+    /// C: `http_mix_new_obfs` (ssr-n/src/obfs/http_simple.c).
+    HTTPMix, // 3
+    /// `tls1.2_ticket_auth` obfs: TLS 1.2 session-ticket handshake.
+    /// C: `tls12_ticket_auth_new_obfs` (ssr-n/src/obfs/tls1.2_ticket.c).
+    TLS12TicketAuth, // 4
+    /// `tls1.2_ticket_fastauth` obfs: ticket auth variant built on ticket_auth.
+    /// C: `tls12_ticket_fastauth_new_obfs` (ssr-n/src/obfs/tls1.2_ticket.c).
     TLS12TicketFastAuth, // 5
 }
 
@@ -307,8 +377,11 @@ impl ObfsType {
 /// Target address for SOCKS5 connections
 #[derive(Debug, Clone)]
 pub enum TargetAddr {
+    /// IPv4 address and port (SOCKS5 ATYP `0x01`).
     IPv4([u8; 4], u16),
+    /// IPv6 address and port (SOCKS5 ATYP `0x04`).
     IPv6([u8; 16], u16),
+    /// Domain name and port (SOCKS5 ATYP `0x03`, length-prefixed on the wire).
     Domain(String, u16),
 }
 

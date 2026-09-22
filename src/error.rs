@@ -51,26 +51,32 @@ pub enum SsrError {
 }
 
 impl SsrError {
+    /// Build [`SsrError::Crypto`]: encryption, decryption or key derivation failed.
     pub fn crypto(msg: impl Into<String>) -> Self {
         SsrError::Crypto(msg.into())
     }
 
+    /// Build [`SsrError::Protocol`]: an SSR protocol handshake or encode/decode step failed.
     pub fn protocol(msg: impl Into<String>) -> Self {
         SsrError::Protocol(msg.into())
     }
 
+    /// Build [`SsrError::Connection`]: listen, connect, send/recv or address resolution failed.
     pub fn connection(msg: impl Into<String>) -> Self {
         SsrError::Connection(msg.into())
     }
 
+    /// Build [`SsrError::Socks5`]: malformed SOCKS5 input or an unsupported command/address type.
     pub fn socks5(msg: impl Into<String>) -> Self {
         SsrError::Socks5(msg.into())
     }
 
+    /// Build [`SsrError::InvalidArgument`]: a caller-supplied value is out of range or unknown.
     pub fn invalid_argument(msg: impl Into<String>) -> Self {
         SsrError::InvalidArgument(msg.into())
     }
 
+    /// Build [`SsrError::Other`]: a failure that fits no other variant.
     pub fn other(msg: impl Into<String>) -> Self {
         SsrError::Other(msg.into())
     }

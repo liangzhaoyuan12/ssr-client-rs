@@ -1,5 +1,8 @@
+/// HTTP-based obfuscation (GET/POST/mix); mirrors `ssr-n/src/obfs/http_simple.c`.
 pub mod http_simple;
+/// Pass-through obfuscation (no framing); mirrors `ssr-n/src/obfs/obfs.c`.
 pub mod plain;
+/// TLS 1.2 session-ticket obfuscation; mirrors `ssr-n/src/obfs/tls1.2_ticket.c`.
 pub mod tls_ticket;
 
 use crate::error::SsrResult;

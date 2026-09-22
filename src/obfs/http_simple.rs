@@ -74,6 +74,9 @@ pub struct HttpSimpleObfs {
 }
 
 impl HttpSimpleObfs {
+    /// Create the `http_simple` obfs for `server_host:server_port`; `extra_param`
+    /// may hold comma-separated Host candidates picked at random per handshake
+    /// (mirrors `ssr-n/src/obfs/http_simple.c`).
     pub fn new(server_host: String, server_port: u16, extra_param: String) -> Self {
         Self {
             server_host,
@@ -174,6 +177,9 @@ pub struct HttpPostObfs {
 }
 
 impl HttpPostObfs {
+    /// Create the `http_post` obfs: same host/path handling as `HttpSimpleObfs`,
+    /// but the first packet is an HTTP POST with a random multipart boundary
+    /// (mirrors `ssr-n/src/obfs/http_simple.c`).
     pub fn new(server_host: String, server_port: u16, extra_param: String) -> Self {
         Self {
             inner: HttpSimpleObfs::new(server_host, server_port, extra_param),
@@ -240,6 +246,9 @@ pub struct HttpMixObfs {
 }
 
 impl HttpMixObfs {
+    /// Create the `http_mix` obfs: builds both a GET and a POST variant and
+    /// picks POST with probability 1/3..1/7 for the first request
+    /// (mirrors `ssr-n/src/obfs/http_simple.c`).
     pub fn new(server_host: String, server_port: u16, extra_param: String) -> Self {
         let simple = HttpSimpleObfs::new(server_host.clone(), server_port, extra_param.clone());
         let post = HttpPostObfs::new(server_host, server_port, extra_param);

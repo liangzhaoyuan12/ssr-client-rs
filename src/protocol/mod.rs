@@ -1,10 +1,21 @@
+/// `auth_aes128` — AES128 stream cipher plus user auth (wire names
+/// `auth_aes128_md5` / `auth_aes128_sha1`).
 pub mod auth_aes128;
+/// `auth_chain_a`..`auth_chain_f` — HMAC-SHA1 chained protocols whose
+/// random padding length comes from a XORShift128+ stream.
 pub mod auth_chain;
+/// `auth_sha1` — Adler32-framed packets with an HMAC-SHA1 auth header.
 pub mod auth_sha1;
+/// `auth_sha1_v2` — like `auth_sha1` with 1- or 3-byte rand_len fields.
 pub mod auth_sha1_v2;
+/// `auth_sha1_v4` — like `auth_sha1_v2`, but data packets carry a CRC32
+/// instead of an Adler32 and the receive path skips the auth header.
 pub mod auth_sha1_v4;
+/// `auth_simple` — CRC32-framed packets preceded by an auth header.
 pub mod auth_simple;
+/// `origin` — pass-through protocol that adds no framing.
 pub mod origin;
+/// `verify_simple` — CRC32 framing with random padding, no auth header.
 pub mod verify_simple;
 
 use crate::error::SsrResult;
@@ -56,7 +67,11 @@ pub trait Protocol: Send {
 /// Global data shared across protocol instances (client_id, connection_id)
 #[derive(Debug, Clone)]
 pub struct GlobalData {
+    /// 8-byte client id generated once at startup; C: `local_client_id`
+    /// (auth_simple_global_data, ssr-n/src/obfs/auth.c:27).
     pub local_client_id: [u8; 8],
+    /// Per-connection counter, only its low 24 bits are random; C:
+    /// `connection_id` (auth_simple_global_data, ssr-n/src/obfs/auth.c:28).
     pub connection_id: u32,
 }
 
@@ -67,6 +82,8 @@ impl Default for GlobalData {
 }
 
 impl GlobalData {
+    /// Random client id plus a random 24-bit connection id. C:
+    /// auth_simple_generate_global_init_data (ssr-n/src/obfs/auth.c:76-81).
     pub fn new() -> Self {
         use rand::RngCore;
         let mut rng = rand::thread_rng();
@@ -97,15 +114,31 @@ impl GlobalData {
 /// Server information needed by protocols
 #[derive(Debug, Clone)]
 pub struct ServerInfo {
+    /// Server host name or IP. C: `server_info_t.host` (ssr-n/src/obfs/obfs.h:29).
     pub host: String,
+    /// Server port. C: `server_info_t.port` (ssr-n/src/obfs/obfs.h:30).
     pub port: u16,
+    /// Per-user extra parameter from the SSR link (e.g. `uid:key` for
+    /// auth_aes128). C: `server_info_t.extra_param` (ssr-n/src/obfs/obfs.h:31).
     pub extra_param: String,
+    /// Encrypt-direction IV, mixed into protocol HMAC keys. C:
+    /// `server_info_t.iv` (ssr-n/src/obfs/obfs.h:33).
     pub iv: Vec<u8>,
+    /// Receive-direction IV. C: `server_info_t.recv_iv` (ssr-n/src/obfs/obfs.h:35).
     pub recv_iv: Vec<u8>,
+    /// Stream-cipher key. C: `server_info_t.key` (ssr-n/src/obfs/obfs.h:37).
     pub key: Vec<u8>,
+    /// SOCKS5 header size once known, 0 before the first packet. C:
+    /// `server_info_t.head_len` (ssr-n/src/obfs/obfs.h:39).
     pub head_len: usize,
+    /// TCP MSS, caps how much data one protocol pack may carry. C:
+    /// `server_info_t.tcp_mss` (ssr-n/src/obfs/obfs.h:40).
     pub tcp_mss: u16,
+    /// Bytes this protocol adds on top of the payload. C:
+    /// `server_info_t.overhead` (ssr-n/src/obfs/obfs.h:41).
     pub overhead: u16,
+    /// I/O buffer size (default 16384). C: `server_info_t.buffer_size`
+    /// (ssr-n/src/obfs/obfs.h:42).
     pub buffer_size: u32,
 }
 
@@ -132,6 +165,8 @@ pub struct XorShift128Plus {
 }
 
 impl XorShift128Plus {
+    /// Seed both 64-bit states from a u64 the way C seeds from time.
+    /// C: init_shift128plus (ssr-n/src/obfs/obfsutil.c:26-33).
     pub fn new(seed: u64) -> Self {
         let mut s = [0u64; 2];
         s[0] = seed | 0x100000000;
@@ -139,6 +174,9 @@ impl XorShift128Plus {
         Self { s }
     }
 
+    /// Load the state from 16 little-endian bytes; panics when `data`
+    /// is shorter than 16 bytes. C: shift128plus_init_from_bin
+    /// (ssr-n/src/obfs/auth_chain.c:131).
     pub fn from_bytes(data: &[u8]) -> Self {
         assert!(data.len() >= 16);
         let mut s = [0u64; 2];
@@ -152,6 +190,8 @@ impl XorShift128Plus {
         Self { s }
     }
 
+    /// Advance the state and return the next value (wrapping add).
+    /// C: xorshift128plus (ssr-n/src/obfs/obfsutil.c:35-44).
     pub fn next_u64(&mut self) -> u64 {
         let x = self.s[0];
         let y = self.s[1];

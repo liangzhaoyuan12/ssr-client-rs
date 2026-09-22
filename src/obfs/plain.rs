@@ -11,6 +11,7 @@ impl Default for PlainObfs {
 }
 
 impl PlainObfs {
+    /// Create the pass-through obfs: no framing, no overhead, no feedback.
     pub fn new() -> Self {
         Self
     }

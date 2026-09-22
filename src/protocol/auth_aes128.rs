@@ -41,6 +41,9 @@ fn hmac_sha1_v(key: &[u8], data: &[u8]) -> Vec<u8> {
 }
 
 impl AuthAES128 {
+    /// `auth_aes128_md5` variant: 16-byte user key hashed with MD5 and
+    /// salt `auth_aes128_md5`. C: auth_aes128_md5_new_obfs
+    /// (ssr-n/src/obfs/auth.c:165).
     pub fn new_md5(server_info: ServerInfo) -> Self {
         use rand::RngCore;
         let mut seed = [0u8; 8];
@@ -64,6 +67,9 @@ impl AuthAES128 {
         }
     }
 
+    /// `auth_aes128_sha1` variant: 20-byte user key hashed with SHA1 and
+    /// salt `auth_aes128_sha1`. C: auth_aes128_sha1_new_obfs
+    /// (ssr-n/src/obfs/auth.c:201).
     pub fn new_sha1(server_info: ServerInfo) -> Self {
         use rand::RngCore;
         let mut seed = [0u8; 8];
@@ -87,6 +93,11 @@ impl AuthAES128 {
         }
     }
 
+    /// Resolve `uid` and `user_key` once (no-op if already set): when
+    /// `extra_param` is `uid:key`, the uid is the numeric prefix (0 when
+    /// unparsable) and the user key is `hash(key part)`; otherwise a
+    /// random uid is drawn and the server key becomes the user key. C:
+    /// auth_aes128_sha1_client_udp_pre_encrypt (ssr-n/src/obfs/auth.c:1601-1624).
     pub fn init_user_key(&mut self) {
         if !self.user_key.is_empty() {
             return;

@@ -8,6 +8,10 @@ use crate::utils::hash::hmac_sha1;
 const PACK_UNIT_SIZE: usize = 2000;
 const HMAC_SHA1_LEN: usize = 10;
 
+/// `auth_sha1_v4` — data packets framed with a 2-byte CRC32 and zero
+/// (not random) padding; the receive path checks CRC32 then Adler32 and
+/// never expects an auth header. C: auth_sha1_v4_new_obfs
+/// (ssr-n/src/obfs/auth.c:141).
 pub struct AuthSHA1V4 {
     has_sent_header: bool,
     recv_buffer: Vec<u8>,
@@ -17,6 +21,9 @@ pub struct AuthSHA1V4 {
 }
 
 impl AuthSHA1V4 {
+    /// Fresh instance with a random-seeded XORShift128+ padding RNG and
+    /// no auth header sent yet. C: auth_sha1_v4_new_obfs
+    /// (ssr-n/src/obfs/auth.c:141).
     pub fn new(server_info: ServerInfo) -> Self {
         use rand::RngCore;
         let mut seed = [0u8; 8];
