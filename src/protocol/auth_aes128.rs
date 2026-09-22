@@ -273,7 +273,7 @@ pub(crate) fn aes_128_cbc_encrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
 }
 
 /// Simple AES-128-CBC decrypt (remove PKCS7 padding)
-fn aes_128_cbc_decrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
+pub fn aes_128_cbc_decrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
     use aes::cipher::{BlockCipherDecrypt, KeyInit};
     type Aes128Dec = aes::Aes128;
 

@@ -4,7 +4,8 @@ use crate::crypto::bytes_to_key::bytes_to_key;
 use crate::crypto::types::CipherType;
 use crate::utils::base64::b64encode;
 use super::{Protocol, GlobalData, ServerInfo, memintcopy_lt, XorShift128Plus};
-use cipher::{KeyInit, StreamCipher as _};
+use cipher::{BlockCipherEncrypt, KeyInit, StreamCipher as _};
+type Aes128Enc = aes::Aes128;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const SSR_BUFF_SIZE: usize = 2048;
@@ -272,10 +273,10 @@ impl AuthChainA {
 
     fn pack_auth_data(&mut self, data: &[u8]) -> Vec<u8> {
         // C auth_chain_a_pack_auth_data format (auth_chain.c:486-598):
-        // [random(4)] [HMAC-MD5(8)] [UID(4)] [AES-CBC encrypted block(16)] [HMAC-MD5(4)]
-        // Total: 4 + 8 + 4 + 16 + 4 = 36 bytes, then data follows
-        let out_size = 36 + data.len();
-        let mut out = vec![0u8; out_size];
+        // [random(4)] [HMAC-MD5(8)] [UID(4)] [AES-CBC encrypted block(16)] [HMAC-MD5(4)] [pack_client_data(data)]
+        // Total header: 4 + 8 + 4 + 16 + 4 = 36 bytes, then data packet follows
+        let authhead_len = 36;
+        let mut out = vec![0u8; authhead_len];
 
         // Increment connection_id
         self.global.increment();
@@ -320,30 +321,30 @@ impl AuthChainA {
         let enc_key_input = format!("{}{}", user_key_b64, self.local.salt);
         let enc_key = bytes_to_key(enc_key_input.as_bytes(), 16);
 
-        let encrypted = crate::protocol::auth_aes128::aes_128_cbc_encrypt(&enc_key, &plain_block);
+        // AES-CBC encrypt with zero IV, no padding (matching C ss_aes_128_cbc_encrypt)
+        let cipher = Aes128Enc::new_from_slice(&enc_key).unwrap();
+        let iv = [0u8; 16];
+        // XOR plaintext with zero IV (first block only, CBC mode)
+        let mut block = [0u8; 16];
+        for i in 0..16 {
+            block[i] = plain_block[i] ^ iv[i];
+        }
+        let mut block_arr = aes::Block::clone_from_slice(&block);
+        cipher.encrypt_block(&mut block_arr);
+        let encrypted = block_arr.to_vec();
         // AES-CBC outputs 16 bytes (PKCS7 padded, but for 16-byte input it's exactly 16+16=32)
-        // Wait - the C code encrypts 16 bytes which produces 32 bytes after padding
-        // But the output format only has 16 bytes at [16..32]
-        // Let me check: C ss_aes_128_cbc_encrypt(16, plain, out, key) - encrypts 16 bytes
-        // The output should be 32 bytes (16 + PKCS7 pad to 32)
-        // But the server reads bytes 16..32 as the encrypted block
-        // This means the C code encrypts exactly 16 bytes and the output is 32 bytes
-        // But only 16 bytes fit in the format at [16..32]
-        // Actually, looking at the server: it reads buffer+16, 16 bytes, and decrypts
-        // So the encrypt must produce exactly 16 bytes output... 
-        // Let me check: C ss_aes_128_cbc_encrypt(16, ...) with CBC - no padding for exact block?
-        // Actually C code uses mbedtls AES which may not pad
-        // For now, let me just copy min(16, encrypted.len()) bytes
-        let enc_len = encrypted.len().min(16);
-        out[16..16 + enc_len].copy_from_slice(&encrypted[..enc_len]);
+        // Copy encrypted block (16 bytes, no padding - matches C ss_aes_128_cbc_encrypt)
+        out[16..32].copy_from_slice(&encrypted);
 
         // [32..36] HMAC-MD5 of bytes 12..32 (UID + encrypted block), key = user_key
         let hmac_input = &out[12..32];
         let enc_hmac = hmac_md5(&self.local.user_key, hmac_input);
         out[32..36].copy_from_slice(&enc_hmac[..4]);
 
-        // [36..] = data (address)
-        out[36..].copy_from_slice(data);
+        // Pack data as a data packet (matching C auth_chain_a_pack_client_data)
+        // The C code appends auth_chain_a_pack_client_data after the auth header
+        let client_data_packet = self.pack_client_data(data);
+        out.extend_from_slice(&client_data_packet);
 
         out
     }
