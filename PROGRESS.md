@@ -110,7 +110,7 @@
 - [x] T2 边界与负面测试（见下"T2 记录"，net +47 用例）
 - [x] T3 proptest 属性测试（见下"T3 记录"）
 - [x] T4 e2e 矩阵脚本（见下"T4 记录"；**全矩阵 39/51 PASS + 12 SKIP, 0 FAIL**）
-- [ ] T5 异常恢复 / T6 soak
+- [x] T5 异常恢复（见下 T5 记录，4/4 --ignored 全绿） / [ ] T6 soak
 - [ ] Q1-Q10 代码质量（基线: 35 warning / 138 unwrap / 5 unsafe / 无 release profile）
 - [ ] R1-R6 运行占用（基线未测）
 - [ ] P1-P5 性能（无 benchmark）
@@ -179,3 +179,24 @@
      （仅 v4/aes128/chain 挂；ssr_executive.c:649 NULL 即跳过解帧）→
      按 GOALS 控制规则记 PROTOCOL_SKIP
 - `cargo test` 239 passed / 0 failed（无回归）
+
+### ✅ T5 异常与恢复测试 + 实现 TCP idle_timeout 回收（2026-09-23）
+
+- **实现 `idle_timeout` 回收**（此前配置存在但 TCP 路径未用；C 用 uv_timer，
+  tunnel.c:158，每次 recv 重启、到期关 socket）:
+  - `ObfsRelay` 新增 `idle_timeout` 字段（handle_connection 传入 config）
+  - 流式 relay 循环 `tokio::select!` 加 idle 分支；上下行有数据即 reset
+  - 首包等待取 `min(10, idle_timeout)`（idle 更紧时尊重 idle；0=禁用，保持原 10s）
+- **`tests/resilience.rs`** 4 场景，均 `#[ignore]`（起真实 ssr-server），
+  `cargo test --test resilience -- --ignored` **4/4 全绿**:
+  1. `server_kill_client_survives_and_recovers` — kill -9 服务端：已建连接
+     干净关闭（EOF/RST）、客户端进程不死、重启后新连接端到端成功
+  2. `idle_timeout_reclaims_silent_connection` — idle=2s：静默连接在
+     1.5~6s 内被 EOF 回收（验证非立即关、非不关）
+  3. `hundred_concurrent_connections_all_succeed` — 100 并发隧道全 roundtrip
+  4. `half_close_write_shutdown_settles_cleanly` — 本地 shutdown(Write)
+     后 relay 传播 FIN、干净 EOF 收尾，客户端不死
+- **坑**: C 服务端把 `idle_timeout:0` 解析成 0ms 立即触发的 uv_timer
+  （config_json.c:149 ×1000），测试服务端配置固定 30s，仅被测客户端用场景值
+- 回归: `cargo test` 239 passed + 4 ignored；全矩阵 39/51+12SKIP 无回归；
+  `tools/e2e_udp.sh --all` UDP_E2E_ALL_PASS；release 构建 0 error

@@ -138,6 +138,9 @@ struct ObfsRelay {
     addr_pkg: Vec<u8>,
     addr_sent: bool,
     buffer_size: usize,
+    /// Connection idle timeout in seconds (0 = disabled). C: uv_timer per
+    /// socket (tunnel.c:158) restarted on every recv; expiry closes the relay.
+    idle_timeout: u32,
 }
 
 impl ObfsRelay {
@@ -149,6 +152,7 @@ impl ObfsRelay {
         cipher_env: crate::crypto::cipher_env::CipherEnv,
         mut protocol: Box<dyn crate::protocol::Protocol>,
         addr_pkg: Vec<u8>,
+        idle_timeout: u32,
     ) -> SsrResult<Self> {
         let (local_read, local_write) = local.into_split();
         let (remote_read, remote_write) = remote.into_split();
@@ -178,6 +182,7 @@ impl ObfsRelay {
             addr_pkg,
             addr_sent: false,
             buffer_size: 8192,
+            idle_timeout,
         })
     }
 
@@ -201,8 +206,15 @@ impl ObfsRelay {
         // head_size=min(1200, total) into the auth header.
         if !self.addr_pkg.is_empty() {
             ssr_debug!("[relay] Waiting for first client data to combine with address...");
+            // C bounds every socket wait by idle_timeout (tunnel.c uv_timer).
+            // Keep the historical 10s cap, but honour a tighter idle_timeout.
+            let first_wait_s = if self.idle_timeout > 0 {
+                10u64.min(self.idle_timeout as u64)
+            } else {
+                10
+            };
             let first_read = tokio::time::timeout(
-                std::time::Duration::from_secs(10),
+                std::time::Duration::from_secs(first_wait_s),
                 self.local_read.read(&mut local_buf),
             ).await;
             let first_data_len = match first_read {
@@ -283,8 +295,18 @@ impl ObfsRelay {
         }
 
         ssr_debug!("[relay] Starting streaming relay loop");
+        // Idle reclamation (C: uv_timer per socket, tunnel.c:158): no traffic
+        // in either direction for idle_timeout closes the relay; 0 disables.
+        let idle_secs = self.idle_timeout;
+        let idle_on = idle_secs > 0;
+        let idle = std::time::Duration::from_secs(idle_secs as u64);
+        let mut idle_fut = std::pin::pin!(tokio::time::sleep(idle));
         loop {
             tokio::select! {
+                _ = &mut idle_fut, if idle_on => {
+                    ssr_debug!("[relay] Idle timeout ({idle_secs}s), closing relay");
+                    break;
+                }
                 result = self.local_read.read(&mut local_buf) => {
                     match result {
                         Ok(0) => {
@@ -317,6 +339,7 @@ impl ObfsRelay {
                             break;
                         }
                         Ok(n) => {
+                            idle_fut.as_mut().reset(tokio::time::Instant::now() + idle);
                             ssr_debug!("[relay] Upstream: {} bytes from client", n);
                             // Protocol: frame the data
                             let framed = self.protocol.client_pre_encrypt(&local_buf[..n])?;
@@ -343,6 +366,7 @@ impl ObfsRelay {
                             break;
                         }
                         Ok(n) => {
+                            idle_fut.as_mut().reset(tokio::time::Instant::now() + idle);
                             ssr_debug!("[relay] Downstream: {} bytes from server", n);
                             // Obfs: unwrap TLS record
                             let (decrypted_obfs, _needs_feedback) = self.obfs.client_decode(&remote_buf[..n])?;
@@ -509,7 +533,7 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
     let protocol = create_protocol(config, &env, is_aead)?;
 
     ssr_debug!("[conn] Starting obfs relay");
-    let relay = ObfsRelay::new(stream, remote_stream, obfs_inst, env, protocol, addr_pkg)?;
+    let relay = ObfsRelay::new(stream, remote_stream, obfs_inst, env, protocol, addr_pkg, config.idle_timeout)?;
     let (up, down) = relay.run().await?;
 
     ssr_debug!("[conn] Relay finished: upstream={up}, downstream={down}");
