@@ -107,7 +107,7 @@
 
 ### 进行中 / 未开始（GOALS.md T→Q→R→P→M）
 - [x] T1 测试资产入库（见上）
-- [ ] T2 边界与负面测试（`tests/full_coverage.rs` mod edge_cases）
+- [x] T2 边界与负面测试（见下"T2 记录"，net +47 用例）
 - [ ] T3 proptest 属性测试
 - [ ] T4 e2e 矩阵脚本（tools/matrix_test.py 已有雏形，需按 T4 组合策略补全）
 - [ ] T5 异常恢复 / T6 soak
@@ -116,3 +116,23 @@
 - [ ] P1-P5 性能（无 benchmark）
 - [ ] M1-M5 主线合入（无 CI / CHANGELOG / LICENSE）
 - 门禁 G1-G12 见 GOALS.md；全绿才 push
+
+### ✅ T2 边界与负面测试（2026-09-22）
+- 落点: `tests/full_coverage.rs` mod `edge_cases`，47 个用例
+  - SOCKS5 解析: 空/1字节/错版本/截断 method list/截断 domain/截断 ipv6
+  - UDP 数据报: 空/3字节/截断头/未知 atyp/FRAG=1 必须暴露给中继/mDNS 5353
+    必须可解析供中继丢弃/端口 0 与 65535 往返/255 字节域名往返/70000 字节
+    超 MTU 载荷不 panic/空载荷
+  - base64: 非法字符/单字符坏长度/空往返/全 256 字节二进制往返
+  - JSON 配置: 截断/垃圾输入/根非对象/缺字段回落默认/错类型不 panic/
+    端口越界
+  - CipherEnv: 未知方法/截断 IV 解密/空解密/AEAD 走流 API 报错/空加密往返
+  - 协议层: 空 pre_encrypt/空 post_decrypt/0..8 字节 post/UDP 钩子空输入/
+    截断回喂——全部不 panic
+- **发现 1 个真 bug 并修复**: `Json::as_u16/as_u32` 对 f64 直接 cast，
+  Rust 饱和转换使 `server_port: 70000` 静默变 65535（合法端口）——
+  已改为 fract()==0 且区间检查，越界返回 None 回落默认
+- 2 个断言按 C 行为修正（非代码 bug）: auth_chain/auth_aes128 空输入
+  返回 Ok(empty) 而非 Err —— C (auth_chain.c:644, auth.c:1251) 空输入
+  0 字节无错误，TCP 分片重组依赖此路径
+- 验证: `cargo test` → **189 passed / 0 failed** (125+93+15)

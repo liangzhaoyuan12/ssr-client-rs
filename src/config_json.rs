@@ -38,7 +38,15 @@ impl Json {
 
     pub fn as_u16(&self) -> Option<u16> {
         match self {
-            Json::Num(n) => Some(*n as u16),
+            // Range-check: f64 -> u16 saturates in Rust (70000 would become
+            // 65535, a silently valid port). Only integral in-range values convert.
+            Json::Num(n) => {
+                if n.fract() == 0.0 && *n >= 0.0 && *n <= u16::MAX as f64 {
+                    Some(*n as u16)
+                } else {
+                    None
+                }
+            }
             Json::Str(s) => s.parse().ok(),
             _ => None,
         }
@@ -46,7 +54,14 @@ impl Json {
 
     pub fn as_u32(&self) -> Option<u32> {
         match self {
-            Json::Num(n) => Some(*n as u32),
+            // Same saturation guard as as_u16 (negative -> 0, huge -> u32::MAX).
+            Json::Num(n) => {
+                if n.fract() == 0.0 && *n >= 0.0 && *n <= u32::MAX as f64 {
+                    Some(*n as u32)
+                } else {
+                    None
+                }
+            }
             Json::Str(s) => s.parse().ok(),
             _ => None,
         }
