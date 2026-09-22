@@ -230,6 +230,33 @@ fn rand_len_d(
     (c.data_size_list0[final_pos] as usize).saturating_sub(other_data_size)
 }
 
+/// C: auth_chain_e_get_rand_len (auth_chain.c:1405-1429). PRNG reinitialised
+/// unconditionally BEFORE the guard (like variant C, unlike D), then the guard
+/// returns 0; the tail pick uses the minimum list item at pos — NO random
+/// selection. auth_chain_f shares this callback (f_new_obfs only swaps salt).
+fn rand_len_e(
+    random: &mut Shift128plusCtx,
+    last_hash: &[u8; 16],
+    ctx: &RandLenCtx,
+    datalength: usize,
+) -> usize {
+    *random = Shift128plusCtx::from_bin_datalen(last_hash, datalength);
+
+    let overhead = ctx.overhead as usize;
+    let c = ctx
+        .c
+        .as_ref()
+        .expect("auth_chain_e: missing data_size_list0 context");
+    let other_data_size = datalength + overhead;
+
+    if other_data_size >= c.data_size_list0[c.data_size_list0.len() - 1] as usize {
+        return 0;
+    }
+    // use the mini size in the data_size_list0
+    let pos = find_pos(&c.data_size_list0, other_data_size as i32);
+    (c.data_size_list0[pos] as usize).saturating_sub(other_data_size)
+}
+
 struct AuthChainAContext {
     obfs: Option<*mut AuthChainA>, // back-reference
     has_sent_header: bool,
@@ -843,28 +870,17 @@ impl Protocol for AuthChainD {
 
 pub struct AuthChainE {
     inner: AuthChainA,
-    c_ctx: AuthChainCContext,
 }
 
 impl AuthChainE {
     pub fn new(server_info: ServerInfo) -> Self {
+        // C: auth_chain_e_new_obfs = auth_chain_d_new_obfs() + swap
+        // get_tcp_rand_len/salt (E reuses D's init_data_size); generic
+        // pre/post encrypt.
         let mut inner = AuthChainA::new(server_info.clone(), "auth_chain_e");
-        let c_ctx = AuthChainD::init_data_size(&server_info.key);
-        Self { inner, c_ctx }
-    }
-
-    fn get_rand_len(local: &mut AuthChainAContext, c_ctx: &AuthChainCContext, datalength: usize) -> usize {
-        let overhead = local.client_over_head as usize;
-        let other_data_size = datalength + overhead;
-
-        let mut rng = Shift128plusCtx::from_bin_datalen(&local.last_client_hash, datalength);
-
-        if other_data_size >= *c_ctx.data_size_list0.last().unwrap_or(&0) as usize {
-            return 0;
-        }
-        let pos = find_pos(&c_ctx.data_size_list0, other_data_size as i32);
-        // E uses minimum size (pos) instead of random selection
-        (c_ctx.data_size_list0[pos] as usize).saturating_sub(other_data_size)
+        inner.local.rand_len_fn = rand_len_e;
+        inner.local.rand_len_ctx.c = Some(AuthChainD::init_data_size(&server_info.key));
+        Self { inner }
     }
 }
 
@@ -875,30 +891,9 @@ impl Protocol for AuthChainE {
     fn set_server_iv(&mut self, iv: Vec<u8>) { self.inner.set_server_iv(iv); }
 
     fn client_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
-        self.inner.init_user_key();
-        let mut result = Vec::new();
-        let mut data = plaindata;
-        let mut len = plaindata.len();
-        if len > 0 && !self.inner.local.has_sent_header {
-            let head_size = 1200.min(len);
-            let packed = self.inner.pack_auth_data(&data[..head_size]);
-            result.extend_from_slice(&packed);
-            data = &data[head_size..];
-            len -= head_size;
-            self.inner.local.has_sent_header = true;
-        }
-        while len > 2000 {
-            let packed = self.inner.pack_client_data(&data[..2000]);
-            result.extend_from_slice(&packed);
-            data = &data[2000..];
-            len -= 2000;
-        }
-        if len > 0 {
-            let packed = self.inner.pack_client_data(data);
-            result.extend_from_slice(&packed);
-        }
-        self.inner.local.last_data_len = plaindata.len();
-        Ok(result)
+        // Generic C path with the e variant's get_tcp_rand_len callback
+        // installed in new().
+        self.inner.client_pre_encrypt(plaindata)
     }
 
     fn client_post_decrypt(&mut self, data: &[u8]) -> SsrResult<Vec<u8>> {
@@ -908,32 +903,67 @@ impl Protocol for AuthChainE {
 
 pub struct AuthChainF {
     inner: AuthChainA,
-    c_ctx: AuthChainCContext,
 }
 
 impl AuthChainF {
     pub fn new(server_info: ServerInfo, extra_param: &str) -> Self {
+        // C: auth_chain_f_new_obfs = auth_chain_e_new_obfs() + swap salt
+        // (F inherits E's get_tcp_rand_len; only the data_size_list0 init key
+        // is time-dependent via auth_chain_f_set_server_info).
         let mut inner = AuthChainA::new(server_info.clone(), "auth_chain_f");
         let key_change_interval = Self::parse_key_change_interval(extra_param);
-        let c_ctx = Self::init_data_size(&server_info.key, key_change_interval);
-        Self { inner, c_ctx }
+        inner.local.rand_len_fn = rand_len_e;
+        inner.local.rand_len_ctx.c =
+            Some(Self::init_data_size(&server_info.key, key_change_interval));
+        Self { inner }
     }
 
+    /// C: auth_chain_f_set_server_info `#N#`/`#N` parsing
+    /// (auth_chain.c:1500-1518): strtoll with base0, digit run must be
+    /// longer than 2 chars (C: `if (l > 2)`), result must be >0 and not
+    /// LLONG_MAX/LLONG_MIN; otherwise the default (1 day) applies.
     fn parse_key_change_interval(extra_param: &str) -> u64 {
         if let Some(hash_pos) = extra_param.find('#') {
             let rest = &extra_param[hash_pos + 1..];
-            if let Some(end) = rest.find('#') {
-                let num_str = &rest[..end];
-                if let Ok(n) = num_str.parse::<u64>() {
-                    if n > 0 { return n; }
-                }
-            } else if !rest.is_empty() {
-                if let Ok(n) = rest.parse::<u64>() {
-                    if n > 0 { return n; }
+            let num_str = match rest.find('#') {
+                Some(end) => &rest[..end],
+                None => rest,
+            };
+            if num_str.len() > 2 {
+                if let Some(n) = Self::strtoll_base0(num_str) {
+                    if n > 0 && n != i64::MAX {
+                        return n as u64;
+                    }
                 }
             }
         }
-        86400 // default: 1 day
+        86400 // default: a day by second
+    }
+
+    /// strtoll(...,0)-lite: optional sign + base0 (0x/0 hex, leading-0 octal,
+    /// decimal), overflow fails (strtoll saturates to LLONG_MAX/MIN, which the
+    /// caller rejects).
+    fn strtoll_base0(s: &str) -> Option<i64> {
+        let (neg, digits) = if let Some(r) = s.strip_prefix('-') {
+            (true, r)
+        } else {
+            (false, s.strip_prefix('+').unwrap_or(s))
+        };
+        if digits.is_empty() {
+            return None;
+        }
+        let (radix, unsigned) = if let Some(h) = digits
+            .strip_prefix("0x")
+            .or_else(|| digits.strip_prefix("0X"))
+        {
+            (16, h)
+        } else if digits.starts_with('0') && digits.len() > 1 {
+            (8, &digits[1..])
+        } else {
+            (10, digits)
+        };
+        let mag = i64::from_str_radix(unsigned, radix).ok()?;
+        Some(if neg { -mag } else { mag })
     }
 
     fn init_data_size(key: &[u8], key_change_interval: u64) -> AuthChainCContext {
@@ -980,30 +1010,9 @@ impl Protocol for AuthChainF {
     fn set_server_iv(&mut self, iv: Vec<u8>) { self.inner.set_server_iv(iv); }
 
     fn client_pre_encrypt(&mut self, plaindata: &[u8]) -> SsrResult<Vec<u8>> {
-        self.inner.init_user_key();
-        let mut result = Vec::new();
-        let mut data = plaindata;
-        let mut len = plaindata.len();
-        if len > 0 && !self.inner.local.has_sent_header {
-            let head_size = 1200.min(len);
-            let packed = self.inner.pack_auth_data(&data[..head_size]);
-            result.extend_from_slice(&packed);
-            data = &data[head_size..];
-            len -= head_size;
-            self.inner.local.has_sent_header = true;
-        }
-        while len > 2000 {
-            let packed = self.inner.pack_client_data(&data[..2000]);
-            result.extend_from_slice(&packed);
-            data = &data[2000..];
-            len -= 2000;
-        }
-        if len > 0 {
-            let packed = self.inner.pack_client_data(data);
-            result.extend_from_slice(&packed);
-        }
-        self.inner.local.last_data_len = plaindata.len();
-        Ok(result)
+        // Generic C path — F shares E's get_tcp_rand_len callback (f_new_obfs
+        // only swaps the salt).
+        self.inner.client_pre_encrypt(plaindata)
     }
 
     fn client_post_decrypt(&mut self, data: &[u8]) -> SsrResult<Vec<u8>> {
@@ -1044,6 +1053,21 @@ mod tests {
         let mut ctx = Shift128plusCtx::from_bin(&[1u8; 16]);
         let val = ctx.next();
         assert!(val != 0);
+    }
+
+    #[test]
+    fn test_key_change_interval_parse() {
+        // C (auth_chain.c:1512): digit run must be longer than 2 chars
+        assert_eq!(AuthChainF::parse_key_change_interval("#86400#"), 86400);
+        assert_eq!(AuthChainF::parse_key_change_interval("#1800#"), 1800);
+        assert_eq!(AuthChainF::parse_key_change_interval("x#72#"), 86400); // l == 2 rejected
+        // C strtoll base0: 0x hex and leading-0 octal
+        assert_eq!(AuthChainF::parse_key_change_interval("x#0x100#"), 256);
+        assert_eq!(AuthChainF::parse_key_change_interval("x#010#"), 8);
+        // no # / empty / zero / trailing form fall back to the default
+        assert_eq!(AuthChainF::parse_key_change_interval(""), 86400);
+        assert_eq!(AuthChainF::parse_key_change_interval("x#0#"), 86400);
+        assert_eq!(AuthChainF::parse_key_change_interval("#3600"), 3600);
     }
 }
 
