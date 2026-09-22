@@ -130,26 +130,26 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
 
 **任务**:
 
-- [ ] T1 测试资产入库（最高优先，/tmp 会被清理）
+- [x] T1 测试资产入库（tests/e2e/ + tools/，2026-09-22）
   - 把 `/tmp/test_udp_e2e.py`、`/tmp/srv_*.json`、`/tmp/cli_*.json`、矩阵测试脚本移入仓库
   - 目录约定: 脚本进 `tools/`，e2e 资产进 `tests/e2e/`（配置模板用占位符，端口/密码由脚本注入）
   - 验证: 清空 /tmp 后 `tools/e2e_udp.sh` 仍能全绿
   - 记录: PROGRESS.md 写明入库文件清单
 
-- [ ] T2 边界与负面测试（协议/配置/解析层）
+- [x] T2 边界与负面测试（full_coverage edge_cases mod，2026-09-22）
   - 空输入、1 字节输入、超长输入（>65507 UDP、>65535 段）
   - 截断的地址头 / HMAC 长度不足 / base64 非法字符 / JSON 缺字段、字段类型错误
   - 端口 0 与 65535、domain 名 255 字节上限、FRAG != 0 丢弃、mDNS 5353 丢弃
   - 每类至少 2 个用例；**要求：不 panic，返回错误或按 C 行为丢包**
   - 落点: `tests/full_coverage.rs` 追加 `mod edge_cases`
 
-- [ ] T3 属性/随机测试（roundtrip 不变量）
+- [x] T3 属性/随机测试（tests/proptest_roundtrip.rs，2026-09-22）
   - dev-dependency 加 `proptest`（纯 Rust，loong64 可编译）
   - 不变量: 任意字节 `decrypt(encrypt(x)) == x`（28 cipher 全枚举）；任意输入协议层不 panic
   - 落点: `tests/proptest_roundtrip.rs`
   - 若 proptest 在 loong64 编译受阻，降级方案: 自写伪随机循环 1000 轮（固定种子，可复现）
 
-- [ ] T4 e2e 矩阵自动化脚本
+- [x] T4 e2e 矩阵自动化脚本（tools/matrix_test.py，39/51+12SKIP 0 FAIL，2026-09-23）
   - `tools/matrix_test.sh`：生成配置 → 起 ssr-server → 起客户端 → curl 验证 → 清理 → 输出 PASS/FAIL 表
   - 组合策略（全叉 21×14×6 过大，采用三轴各自全覆盖 + 关键交叉）:
     1. cipher 轴: 16 已实现流加密 + 5 AEAD，各配 origin+plain = 21 组
@@ -159,19 +159,19 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
   - 结果表写入 `tests/e2e/RESULTS.md`，含日期与服务端版本
   - 已知服务端不支持的组合（cast5/idea/rc2/seed、auth_chain_f+key_len>16 SIGBUS）标记 SKIP 并注明原因
 
-- [ ] T5 异常与恢复测试
+- [x] T5 异常与恢复测试（tests/resilience.rs 4/4 --ignored 全绿，2026-09-23）
   - 服务端 `kill -9` → 客户端不 panic、连接关闭干净、恢复后可重连
   - 客户端空闲超时（idle_timeout）到期回收
   - 并发: 100 个并发 TCP 连接同时传输，全部成功
   - 半关闭: 客户端侧先 close 写端，服务端侧正常收尾
   - 落点: `tests/resilience.rs`（`#[ignore]` 标注长耗时，CI 用 `-- --ignored` 跑）
 
-- [ ] T6 长稳 soak 测试
+- [x] T6 长稳 soak 测试（tools/soak_test.sh 600s SOAK_PASS + tools/resource_probe.sh R1 基线，2026-09-23）
   - 10 分钟持续传输（httpbin bytes 循环 + UDP echo 循环）
   - 每 30 秒采样 RSS / fd / 线程数，断言: RSS 增长 ≤ 10MB（warmup 后）、fd 回到基线、无 panic
   - 落点: `tools/soak_test.sh` + `tools/resource_probe.sh`（R1 复用同一脚本）
 
-- [ ] T7 回归确认
+- [x] T7 回归确认（cargo test 239+4ignored / e2e_udp ALL_PASS / 矩阵 39/51+12SKIP 0 FAIL，2026-09-23）
   - `cargo test` 全绿；`tools/e2e_*.sh` 全绿
   - PROGRESS.md 记录: 新增测试数（186 → N）、矩阵结果表位置
 

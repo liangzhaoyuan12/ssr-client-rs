@@ -200,3 +200,28 @@
   （config_json.c:149 ×1000），测试服务端配置固定 30s，仅被测客户端用场景值
 - 回归: `cargo test` 239 passed + 4 ignored；全矩阵 39/51+12SKIP 无回归；
   `tools/e2e_udp.sh --all` UDP_E2E_ALL_PASS；release 构建 0 error
+
+### ✅ T6 长稳 soak + R1 基线 + T7 回归确认（2026-09-23，Phase T 收官）
+
+- **`tools/resource_probe.sh`**（T6 采样 + R1 基线复用同一脚本）:
+  - 单发模式: `resource_probe.sh <pid>` → `rss_kb= fd= threads=`（soak 每 30s 调）
+  - `--idle` 模式: 启动客户端空闲测量并断言 R1 目标
+  - **R1 基线实测（hk.json，release 构建）**: idle RSS **3616KB**（≤20MB PASS）、
+    线程 **5**（≤nproc+4=8 PASS）、空闲 CPU **0.00%**（PASS）、fd=11
+- **`tools/soak_test.sh`**（T6）: 本地 64KB 文件每 2s curl 过 SOCKS5（TCP）+
+  test_udp_e2e.py 每 30s 循环（UDP，每次新建会话压测 create/teardown，
+  轮换 echo 端口），warmup 后每 30s 采样，断言 RSS 增长 ≤10MB、
+  fd 回基线、无 panic、流量 0 失败
+  - **600s 完整跑 SOAK_PASS**: TCP **298 ok/0 fail**、UDP **20 ok/0 fail**、
+    RSS 3856→4640KB（增长 **784KB** ≤10MB）、fd 11→11、panic **0**
+  - 90s 冒烟（SOAK_DURATION=90 WARMUP=30）亦 PASS，可用于 CI 快测
+- **T7 回归确认（全部绿）**:
+  - `cargo test` → **239 passed / 0 failed / 4 ignored**（基线 186 → 239，
+    T 阶段净增 53: T2 边界 + T3 proptest + UDP/iv 相关）
+  - `tools/e2e_udp.sh --all` → UDP_E2E_ALL_PASS
+  - `tools/matrix_test.py` → **39/51 PASS + 12 SKIP, 0 FAIL**，
+    结果表 `tests/e2e/RESULTS.md`（含日期 + 服务端 sha256[:12]=d70342262c45）
+  - `tests/resilience.rs -- --ignored` → 4/4（T5）
+  - 备注: GOALS G8/T4 写的是 `matrix_test.sh`，实际实现为
+    `tools/matrix_test.py`（Python 三轴驱动，功能等价，以 .py 为准）
+- **Phase T 全部 7 项完成**。GOALS.md T1-T7 勾选已同步。
