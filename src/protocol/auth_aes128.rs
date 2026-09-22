@@ -2,7 +2,7 @@ use crate::error::SsrResult;
 use crate::utils::base64::b64encode;
 use crate::utils::hash::{hmac_md5, hmac_sha1, md5, sha1};
 use crate::crypto::bytes_to_key::bytes_to_key;
-use super::{Protocol, GlobalData, ServerInfo, get_s5_head_size, memintcopy_lt, XorShift128Plus};
+use super::{Protocol, GlobalData, ServerInfo, memintcopy_lt, XorShift128Plus};
 
 const PACK_UNIT_SIZE: usize = 2000;
 
@@ -264,7 +264,7 @@ pub(crate) fn aes_128_cbc_encrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
         for i in 0..16 {
             block[i] = chunk[i] ^ iv[i];
         }
-        let mut block_arr = aes::Block::clone_from_slice(&block);
+        let mut block_arr = aes::Block::from(block);
         cipher.encrypt_block(&mut block_arr);
         iv.copy_from_slice(&block_arr);
         output.extend_from_slice(&block_arr);
@@ -283,7 +283,9 @@ pub fn aes_128_cbc_decrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
     let mut output = Vec::with_capacity(data.len());
 
     for chunk in data.chunks(16) {
-        let block_arr = aes::Block::clone_from_slice(chunk);
+        // Non-block-aligned tail can only come from malformed input (the wire
+        // is always 16-byte aligned); stop instead of panicking on it.
+        let Ok(block_arr) = aes::Block::try_from(chunk) else { break; };
         let mut decrypted = block_arr;
         cipher.decrypt_block(&mut decrypted);
         let mut plain = [0u8; 16];

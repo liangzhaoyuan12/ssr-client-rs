@@ -9,36 +9,6 @@ const TLS_RECORD_OVERHEAD: usize = 5;
 /// HMAC-SHA1 truncation length (first 10 bytes)
 const HMAC_SHA1_LEN: usize = 10;
 
-/// Cipher suites for TLS ClientHello (from C source)
-static TLS_CIPHER_SUITES: &[u8] = &[
-    0x00, 0x1c, 0xc0, 0x2b, 0xc0, 0x2f, 0xcc, 0xa9,
-    0xcc, 0xa8, 0xcc, 0x14, 0xcc, 0x13, 0xc0, 0x0a,
-    0xc0, 0x14, 0xc0, 0x09, 0xc0, 0x13, 0x00, 0x9c,
-    0x00, 0x35, 0x00, 0x2f, 0x00, 0x0a, 0x01, 0x00,
-];
-
-/// Session ticket extension header
-static TLS_SESSION_TICKET_EXT: &[u8] = &[
-    0xff, 0x01, 0x00, 0x01, 0x00,
-];
-
-/// Extended master secret + other extensions header
-static TLS_EXTENDED_MASTER_SECRET: &[u8] = &[
-    0x00, 0x17, 0x00, 0x00, 0x00, 0x23,
-];
-
-/// Signature algorithms and other extensions
-static TLS_SIGNATURE_ALGORITHMS: &[u8] = &[
-    0x00, 0x0d, 0x00, 0x16, 0x00, 0x14, 0x06, 0x01,
-    0x06, 0x03, 0x05, 0x01, 0x05, 0x03, 0x04, 0x01,
-    0x04, 0x03, 0x03, 0x01, 0x03, 0x03, 0x02, 0x01,
-    0x02, 0x03, 0x00, 0x05, 0x00, 0x05, 0x01, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x12, 0x00, 0x00, 0x75,
-    0x50, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x02, 0x01,
-    0x00, 0x00, 0x0a, 0x00, 0x06, 0x00, 0x04, 0x00,
-    0x17, 0x00, 0x18,
-];
-
 /// Build TLS SNI extension for a given hostname
 fn build_sni(hostname: &str) -> Vec<u8> {
     // Match C code exactly: \x00\x00 + len(2) + len0+2(2) + \x00(1) + url_len(2) + url
@@ -100,7 +70,6 @@ fn pack_data(data: &[u8]) -> Vec<u8> {
 /// TLS 1.2 ticket auth obfuscation
 pub struct Tls12TicketAuthObfs {
     server_host: String,
-    server_port: u16,
     extra_param: String,
     fastauth: bool,
     /// Handshake status bitmask:
@@ -117,12 +86,12 @@ pub struct Tls12TicketAuthObfs {
 }
 
 impl Tls12TicketAuthObfs {
-    pub fn new(server_host: String, server_port: u16, extra_param: String, fastauth: bool) -> Self {
+    pub fn new(server_host: String, _server_port: u16, extra_param: String, fastauth: bool) -> Self {
+        // C's tls1.2_ticket never reads the port either (obfs hmac = host + client_id).
         let mut client_id = [0u8; 32];
         rand::thread_rng().fill(&mut client_id);
         Self {
             server_host,
-            server_port,
             extra_param,
             fastauth,
             handshake_status: 0,
@@ -372,7 +341,7 @@ impl Obfs for Tls12TicketAuthObfs {
         // Validate auth_data HMAC
         // auth_data is at offset 11 in the Finished message body
         // But we need to find it by iterating through TLS records
-        let mut header_length: usize = 0;
+        let mut header_length: usize;
         let iter = self.recv_buffer.clone();
 
         // First try direct offset (raw bytes without TLS record headers)
@@ -382,11 +351,11 @@ impl Obfs for Tls12TicketAuthObfs {
         hmac_key.extend_from_slice(&self.client_id);
 
         // HMAC over encryptdata[11..33] (22 bytes)
-        let mut hash = hmac_sha1(&hmac_key, &encryptdata[11..33]);
+        let hash = hmac_sha1(&hmac_key, &encryptdata[11..33]);
         if hash[..10] == encryptdata[33..43] {
             // First HMAC matches, check final HMAC
             let total_len = encryptdata.len() - 10;
-            let mut hash2 = hmac_sha1(&hmac_key, &encryptdata[..total_len]);
+            let hash2 = hmac_sha1(&hmac_key, &encryptdata[..total_len]);
             if hash2[..10] == encryptdata[encryptdata.len() - 10..] {
                 // Both HMACs match
                 header_length = encryptdata.len();
@@ -426,7 +395,7 @@ impl Obfs for Tls12TicketAuthObfs {
         }
 
         // Validate HMAC over accumulated records
-        let mut hash = hmac_sha1(&hmac_key, &iter[..header_length - 10]);
+        let hash = hmac_sha1(&hmac_key, &iter[..header_length - 10]);
         if hash[..10] == iter[header_length - 10..header_length] {
             self.handshake_status |= 0x08;
             self.recv_buffer.drain(..header_length);
@@ -462,7 +431,8 @@ impl Obfs for Tls12TicketAuthObfs {
     }
 }
 
-/// Generate random number in range [min, max)
+/// Generate random number in range [min, max) — used by the test-suite only.
+#[cfg(test)]
 fn rng_range(min: usize, max: usize) -> usize {
     let mut rng = rand::thread_rng();
     rng.gen_range(min..max)

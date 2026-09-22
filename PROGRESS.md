@@ -225,3 +225,26 @@
   - 备注: GOALS G8/T4 写的是 `matrix_test.sh`，实际实现为
     `tools/matrix_test.py`（Python 三轴驱动，功能等价，以 .py 为准）
 - **Phase T 全部 7 项完成**。GOALS.md T1-T7 勾选已同步。
+
+### ✅ Q1 编译告警清零（2026-09-23，Phase Q 起点）
+
+- **`cargo build` 35 → 0 warning**（debug 与 release 均 0，0 error），按 GOALS
+  分三类逐类处理、每类跑 `cargo test` 验证无行为变化:
+  1. **unused import/variable/mut（12）**: 删 TcpRelay/Protocol/XorShift128Plus/
+     RngCore/get_s5_head_size 等未用 import、`spawn_session_task` 未用 `server`
+     参数（连同调用点）、4 处 unnecessary mut、`header_length` 未读初值
+  2. **deprecated from_slice/clone_from_slice（14）**: aead.rs 11 处
+     `Nonce/Tag::from_slice` → `try_from` + map_err 错误分支（GOALS 禁 unwrap）；
+     auth_chain/auth_aes128 3 处 `aes::Block::clone_from_slice` →
+     定长数组用 `From<[u8;16]>`（hybrid-array 无失败分支），decrypt 切片用
+     `try_from ... else break`（仅畸形尾块可达，原实现会 panic）
+  3. **dead code（10）**: 删 udp_relay 只写不读的 `config` 字段、tls_ticket
+     4 个 ClientHello 内联字节的重复 static、只写不读的 `server_port` 字段
+     （C 侧同样不读，`new()` 参数保留 `_server_port` 维持 API）、
+     `rng_range` 标 `#[cfg(test)]`（仅测试用）、auth_chain 8 个只写字段
+     （构造后从不读取，解构点均用 `..`）、auth_sha1_v4 `has_recv_header`
+- **回归全绿**: `cargo test` 239/0；矩阵 39/51+12SKIP 0 FAIL；UDP e2e
+  ALL_PASS；resilience 4/4 —— e2e 证明字节行为未变
+- clippy 基线（Q2 输入）: `cargo clippy --all-targets` = **58 warnings**
+  （Top: manual !Range::contains ×9、useless format! ×5、empty line after
+  doc comment ×5、repeat().take() ×3…）

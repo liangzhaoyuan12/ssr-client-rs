@@ -181,7 +181,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
 
 **任务**:
 
-- [ ] Q1 消除 35 个编译告警（逐类处理，不动行为）
+- [x] Q1 消除 35 个编译告警（debug+release 均 0，2026-09-23）
   - 11 处 `cipher::Array::from_slice` 弃用 → 按提示改 `TryFrom`（注意失败分支返回错误，不 unwrap）
   - 3 处 `clone_from_slice` 同上
   - 4 处 unnecessary mut、8 处 unused import/variable/function、5 处 never read 字段/静态

@@ -1,9 +1,8 @@
 use crate::error::{SsrError, SsrResult};
 use crate::utils::hash::hmac_md5;
 use crate::crypto::bytes_to_key::bytes_to_key;
-use crate::crypto::types::CipherType;
 use crate::utils::base64::b64encode;
-use super::{Protocol, GlobalData, ServerInfo, memintcopy_lt, XorShift128Plus};
+use super::{Protocol, GlobalData, ServerInfo, memintcopy_lt};
 use cipher::{BlockCipherEncrypt, KeyInit, StreamCipher as _};
 type Aes128Enc = aes::Aes128;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -269,7 +268,6 @@ fn rand_len_e(
 }
 
 struct AuthChainAContext {
-    obfs: Option<*mut AuthChainA>, // back-reference
     has_sent_header: bool,
     recv_buffer: Vec<u8>,
     recv_id: u32,
@@ -281,15 +279,8 @@ struct AuthChainAContext {
     last_server_hash: [u8; 16],
     random_client: Shift128plusCtx,
     random_server: Shift128plusCtx,
-    cipher_type: CipherType,
     encrypt_ctx: Option<rc4::Rc4>, // RC4 stateful cipher (encrypt direction)
     decrypt_ctx: Option<rc4::Rc4>, // RC4 stateful cipher (decrypt direction)
-    unit_len: usize,
-    max_time_dif: i64,
-    client_id: u32,
-    connection_id: u32,
-    user_id_num: u32,
-    client_over_head: u16,
     tcp_mss: u16,
     salt: &'static str,
     /// C: local->get_tcp_rand_len — variant dispatch (A by default)
@@ -310,7 +301,6 @@ impl AuthChainA {
         let mut seed = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut seed);
         let mut local = AuthChainAContext {
-            obfs: None,
             has_sent_header: false,
             recv_buffer: Vec::with_capacity(SSR_BUFF_SIZE * 2),
             recv_id: 1,
@@ -322,15 +312,8 @@ impl AuthChainA {
             last_server_hash: [0; 16],
             random_client: Shift128plusCtx::from_bin(&seed),
             random_server: Shift128plusCtx::from_bin(&seed[8..]),
-            cipher_type: CipherType::RC4,
             encrypt_ctx: None,
             decrypt_ctx: None,
-            unit_len: 2000,
-            max_time_dif: 86400,
-            client_id: 0,
-            connection_id: 0,
-            user_id_num: 0,
-            client_over_head: 0,
             tcp_mss: 1460,
             salt,
             rand_len_fn: rand_len_a,
@@ -519,7 +502,6 @@ impl AuthChainA {
         out[1] = ((datalen >> 8) ^ self.local.last_client_hash[15] as u16) as u8;
 
         // Random padding + encrypted data
-        use rand::RngCore;
         let rnd_data: Vec<u8> = (0..rand_len).map(|_| rand::random::<u8>()).collect();
 
         if data.len() > 0 {
@@ -603,7 +585,7 @@ impl AuthChainA {
         for i in 0..16 {
             block[i] = plain_block[i] ^ iv[i];
         }
-        let mut block_arr = aes::Block::clone_from_slice(&block);
+        let mut block_arr = aes::Block::from(block);
         cipher.encrypt_block(&mut block_arr);
         let encrypted = block_arr.to_vec();
         // AES-CBC outputs 16 bytes (PKCS7 padded, but for 16-byte input it's exactly 16+16=32)

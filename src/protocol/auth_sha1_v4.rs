@@ -10,7 +10,6 @@ const HMAC_SHA1_LEN: usize = 10;
 
 pub struct AuthSHA1V4 {
     has_sent_header: bool,
-    has_recv_header: bool,
     recv_buffer: Vec<u8>,
     global: GlobalData,
     server_info: ServerInfo,
@@ -25,7 +24,6 @@ impl AuthSHA1V4 {
         let seed_val = u64::from_le_bytes(seed);
         Self {
             has_sent_header: false,
-            has_recv_header: false,
             recv_buffer: Vec::with_capacity(16384),
             global: GlobalData::new(),
             server_info,

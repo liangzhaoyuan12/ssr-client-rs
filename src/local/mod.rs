@@ -18,7 +18,6 @@ use tokio::sync::Notify;
 
 use crate::config::SsrClientConfig;
 use crate::error::{SsrError, SsrResult};
-use crate::relay::TcpRelay;
 use crate::socks5::{
     self, build_address_package, build_method_response, build_success_reply, parse_connect_request,
     parse_method_negotiation, ATYP_IPV4, AUTH_NONE, CMD_CONNECT,
@@ -192,8 +191,6 @@ impl ObfsRelay {
     /// which triggers the obfs layer to generate CCS+Finished.
     /// Then streams remaining data from client.
     async fn run(mut self) -> SsrResult<(u64, u64)> {
-        use crate::protocol::Protocol;
-
         let mut total_up = 0u64;
         let mut total_down = 0u64;
 
@@ -345,7 +342,7 @@ impl ObfsRelay {
                             let framed = self.protocol.client_pre_encrypt(&local_buf[..n])?;
                             ssr_debug!("[relay] Protocol framed: {} bytes", framed.len());
                             // Stateful cipher: encrypt with stream state
-                            let mut encrypted = self.cipher_env.encrypt_ctx(&mut self.encrypt_ctx, &framed, false)?;
+                            let encrypted = self.cipher_env.encrypt_ctx(&mut self.encrypt_ctx, &framed, false)?;
                             ssr_debug!("[relay] Encrypted: {} bytes", encrypted.len());
                             // Obfs: wrap in TLS record
                             let encoded = self.obfs.client_encode(&encrypted)?;

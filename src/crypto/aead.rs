@@ -150,27 +150,32 @@ impl AeadCipher {
         let mut buf = plaintext.to_vec();
         let r = match self {
             AeadCipher::Aes128Gcm(c) => c.encrypt_inout_detached(
-                Nonce::from_slice(nonce),
+                &Nonce::try_from(nonce)
+                    .map_err(|_| SsrError::crypto("bad AEAD nonce length".to_string()))?,
                 b"",
                 (&mut buf[..]).into(),
             ),
             AeadCipher::Aes192Gcm(c) => c.encrypt_inout_detached(
-                Nonce::from_slice(nonce),
+                &Nonce::try_from(nonce)
+                    .map_err(|_| SsrError::crypto("bad AEAD nonce length".to_string()))?,
                 b"",
                 (&mut buf[..]).into(),
             ),
             AeadCipher::Aes256Gcm(c) => c.encrypt_inout_detached(
-                Nonce::from_slice(nonce),
+                &Nonce::try_from(nonce)
+                    .map_err(|_| SsrError::crypto("bad AEAD nonce length".to_string()))?,
                 b"",
                 (&mut buf[..]).into(),
             ),
             AeadCipher::ChaCha20Poly1305(c) => c.encrypt_inout_detached(
-                Nonce::from_slice(nonce),
+                &Nonce::try_from(nonce)
+                    .map_err(|_| SsrError::crypto("bad AEAD nonce length".to_string()))?,
                 b"",
                 (&mut buf[..]).into(),
             ),
             AeadCipher::XChaCha20Poly1305(c) => c.encrypt_inout_detached(
-                Nonce::from_slice(nonce),
+                &Nonce::try_from(nonce)
+                    .map_err(|_| SsrError::crypto("bad AEAD nonce length".to_string()))?,
                 b"",
                 (&mut buf[..]).into(),
             ),
@@ -188,22 +193,53 @@ impl AeadCipher {
         let split = ciphertext.len() - TAG_LEN;
         let (body, tag_bytes) = ciphertext.split_at(split);
         let mut buf = body.to_vec();
-        let tag = Tag::from_slice(tag_bytes);
+        let tag = Tag::try_from(tag_bytes)
+            .map_err(|_| SsrError::crypto("bad AEAD tag length".to_string()))?;
         let r = match self {
             AeadCipher::Aes128Gcm(c) => {
-                c.decrypt_inout_detached(Nonce::from_slice(nonce), b"", (&mut buf[..]).into(), tag)
+                c.decrypt_inout_detached(
+                    &Nonce::try_from(nonce)
+                        .map_err(|_| SsrError::crypto("bad AEAD nonce length".to_string()))?,
+                    b"",
+                    (&mut buf[..]).into(),
+                    &tag,
+                )
             }
             AeadCipher::Aes192Gcm(c) => {
-                c.decrypt_inout_detached(Nonce::from_slice(nonce), b"", (&mut buf[..]).into(), tag)
+                c.decrypt_inout_detached(
+                    &Nonce::try_from(nonce)
+                        .map_err(|_| SsrError::crypto("bad AEAD nonce length".to_string()))?,
+                    b"",
+                    (&mut buf[..]).into(),
+                    &tag,
+                )
             }
             AeadCipher::Aes256Gcm(c) => {
-                c.decrypt_inout_detached(Nonce::from_slice(nonce), b"", (&mut buf[..]).into(), tag)
+                c.decrypt_inout_detached(
+                    &Nonce::try_from(nonce)
+                        .map_err(|_| SsrError::crypto("bad AEAD nonce length".to_string()))?,
+                    b"",
+                    (&mut buf[..]).into(),
+                    &tag,
+                )
             }
             AeadCipher::ChaCha20Poly1305(c) => {
-                c.decrypt_inout_detached(Nonce::from_slice(nonce), b"", (&mut buf[..]).into(), tag)
+                c.decrypt_inout_detached(
+                    &Nonce::try_from(nonce)
+                        .map_err(|_| SsrError::crypto("bad AEAD nonce length".to_string()))?,
+                    b"",
+                    (&mut buf[..]).into(),
+                    &tag,
+                )
             }
             AeadCipher::XChaCha20Poly1305(c) => {
-                c.decrypt_inout_detached(Nonce::from_slice(nonce), b"", (&mut buf[..]).into(), tag)
+                c.decrypt_inout_detached(
+                    &Nonce::try_from(nonce)
+                        .map_err(|_| SsrError::crypto("bad AEAD nonce length".to_string()))?,
+                    b"",
+                    (&mut buf[..]).into(),
+                    &tag,
+                )
             }
         };
         r.map_err(|_| SsrError::crypto("AEAD authentication failed".to_string()))?;

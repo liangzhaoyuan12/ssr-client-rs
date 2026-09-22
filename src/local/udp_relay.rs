@@ -63,7 +63,6 @@ fn parse_ss_payload(payload: &[u8]) -> SsrResult<crate::socks5::UdpDatagram> {
 }
 
 pub struct UdpRelay {
-    config: SsrClientConfig,
     listener: Arc<UdpSocket>,
     server: SocketAddr,
     env: Arc<CipherEnv>,
@@ -98,7 +97,6 @@ impl UdpRelay {
 
         Ok(Self {
             timeout_ms: (config.udp_timeout.max(1) as u64) * 1000,
-            config,
             listener: Arc::new(listener),
             server,
             env: Arc::new(env),
@@ -238,7 +236,6 @@ impl UdpRelay {
             self.env.clone(),
             self.is_aead,
             self.protocol.clone(),
-            self.server,
             self.sessions.clone(),
             last_seen,
             self.timeout_ms,
@@ -256,7 +253,6 @@ fn spawn_session_task(
     env: Arc<CipherEnv>,
     is_aead: bool,
     protocol: Arc<Mutex<Box<dyn Protocol>>>,
-    server: SocketAddr,
     sessions: Arc<Mutex<HashMap<SessionKey, Session>>>,
     last_seen: Arc<AtomicU64>,
     timeout_ms: u64,
