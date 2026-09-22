@@ -108,7 +108,7 @@
 ### 进行中 / 未开始（GOALS.md T→Q→R→P→M）
 - [x] T1 测试资产入库（见上）
 - [x] T2 边界与负面测试（见下"T2 记录"，net +47 用例）
-- [ ] T3 proptest 属性测试
+- [x] T3 proptest 属性测试（见下"T3 记录"）
 - [ ] T4 e2e 矩阵脚本（tools/matrix_test.py 已有雏形，需按 T4 组合策略补全）
 - [ ] T5 异常恢复 / T6 soak
 - [ ] Q1-Q10 代码质量（基线: 35 warning / 138 unwrap / 5 unsafe / 无 release profile）
@@ -136,3 +136,15 @@
   返回 Ok(empty) 而非 Err —— C (auth_chain.c:644, auth.c:1251) 空输入
   0 字节无错误，TCP 分片重组依赖此路径
 - 验证: `cargo test` → **189 passed / 0 failed** (125+93+15)
+
+### ✅ T3 proptest 属性测试（2026-09-22）
+- dev-dependency 加 `proptest`（loong64 拉取编译均成功，未启用降级方案）
+- 落点: `tests/proptest_roundtrip.rs`，6 条属性 × 64 cases/条:
+  1. 15 种流密码 `decrypt(encrypt(x)) == x`（任意 0..2048 字节 × 随机方法）
+  2. AuthChainA pre_encrypt 不 panic 且 framing 只增不减
+  3. AuthChainA post_decrypt 任意字节不 panic
+  4. AuthAES128 + SHA1V4 post_decrypt 任意字节不 panic
+  5. UDP 钩子 pre/post 任意字节不 panic + pre 不缩载荷
+  6. UDP 数据报 build→parse 往返（任意 payload×port×三种地址类型）
+- AEAD 方法不入流测试（走 context API，encrypt/decrypt 路径按设计报错）
+- 验证: `cargo test` → **239 passed / 0 failed** (125+93+15+6)
