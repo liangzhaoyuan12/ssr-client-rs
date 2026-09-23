@@ -90,6 +90,54 @@ async fn main() {
 }
 ```
 
+### Two integration modes
+
+| | Mode A — system port (default) | Mode B — data pipe |
+|---|---|---|
+| API | `client.start()` | `client.open_session(target)` |
+| Front side | binds `listen_address:listen_port`, speaks SOCKS5 + UDP ASSOCIATE | none — your own front protocol owns it |
+| Back side | handled internally | `AsyncRead + AsyncWrite` plaintext stream to `target` |
+| Use when | drop-in local proxy for applications | custom DNS, routing rules, direct-vs-proxy choice, in-flight byte middleware |
+
+Both modes share one tunnel builder, so the bytes they put on the wire are
+identical. Mode B example:
+
+```rust,no_run
+use ssr_client_rs::{CipherType, ObfsType, ProtocolType, SsrClient, SsrClientConfig, TargetAddr};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    let client = SsrClient::new(SsrClientConfig {
+        server: "example.com".into(),
+        server_port: 8388,
+        password: "secret".into(),
+        method: CipherType::AES256CFB,
+        protocol: ProtocolType::AuthAES128SHA1,
+        obfs: ObfsType::TLS12TicketAuth,
+        ..Default::default()
+    });
+
+    // Your front-end decides routing per connection: a `Domain` target is
+    // resolved by the SSR server (remote DNS); an `IPv4`/`IPv6` target can
+    // be the result of your own resolver. Skip `open_session` entirely for
+    // direct (non-proxied) connections.
+    let target = TargetAddr::Domain("example.com".into(), 443);
+    let mut session = client.open_session(target).await.map_err(std::io::Error::other)?;
+
+    // Bytes here are the target connection's plaintext — wrap the session in
+    // any AsyncRead/AsyncWrite middleware to inspect or modify them.
+    session.write_all(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n").await?;
+    let mut reply = Vec::new();
+    session.read_to_end(&mut reply).await?;
+    session.finish().await.map_err(std::io::Error::other)?;
+    Ok(())
+}
+```
+
+Mode A (`start()`) binds a port, so `open_session` failure modes and the
+SOCKS5 path never overlap; UDP ASSOCIATE is Mode A only.
+
 ### Runnable example
 
 [`examples/socks5.rs`](examples/socks5.rs) starts a SOCKS5 proxy from a JSON

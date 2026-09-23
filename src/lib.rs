@@ -38,7 +38,7 @@ pub use crypto::{CipherType, ObfsType, ProtocolType, TargetAddr};
 /// The crate-wide error type and result alias.
 pub use error::{SsrError, SsrResult};
 /// The top-level SSR client facade.
-pub use local::SsrClient;
+pub use local::{SsrClient, SsrSession};
 /// The TCP relay that drives one accepted connection.
 pub use relay::TcpRelay;
 /// SOCKS5 wire types and RFC 1928 command/address constants.

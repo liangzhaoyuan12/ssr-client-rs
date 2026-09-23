@@ -36,6 +36,14 @@ First release: a byte-compatible Rust port of the ssr-n client.
   UDP relay (SOCKS5 UDP ASSOCIATE), incl. protocol UDP hooks and AEAD/RC4
   per-packet UDP crypto.
 - Local SOCKS5 server (`SsrClient`) plus `examples/socks5.rs`.
+- **Dual integration modes**: Mode A binds a system port and serves SOCKS5
+  (`SsrClient::start`); Mode B binds nothing and hands back a data pipe —
+  `SsrClient::open_session(target) -> SsrSession`, an
+  `AsyncRead + AsyncWrite` plaintext stream to the target for callers that
+  do their own front-end (custom DNS, routing rules, direct-vs-proxy
+  decisions, in-flight byte middleware). Both modes share one tunnel
+  builder, so their wire bytes are identical; TCP only (UDP ASSOCIATE
+  stays in Mode A).
 - ssr-n JSON config loader (`config_from_json`).
 - Strongly typed config: `SsrClientConfig::method/protocol/obfs` are the
   `CipherType`/`ProtocolType`/`ObfsType` enums (struct-literal friendly with

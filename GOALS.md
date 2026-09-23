@@ -351,6 +351,18 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
 
 ---
 
+## Phase U: 双模式集成 — 系统端口 / 数据管道（用户需求 2026-09-23）
+
+- [x] U1 `SsrClient::open_session(target) -> SsrSession` 数据管道 API（2026-09-23）
+  - 模式 A（绑定系统端口、SOCKS5）保持不变；模式 B 不监听端口，返回 AsyncRead+AsyncWrite 明文流
+  - 实现约束：建链逻辑抽取 `establish_tunnel` 与 SOCKS5 路径共享；`ObfsRelay` 本地侧泛型化，`run()` 泵体两种模式共用（wire 字节不变）
+  - 收尾语义：Drop=中止泵并关隧道；`finish()`=优雅排干并透出泵错误；泵错误映射到 read EOF/write 错误
+- [x] U2 验证与文档（拒绝路径+e2e 双会话 200 OK、matrix 39/51 0 FAIL、UDP PASS、README 双片段编译、门禁全绿，2026-09-23）
+  - 默认单测（无服务端的拒绝路径）+ `--ignore` e2e（真实 ssr-server：HTTP 往返、IPv4/Domain 两种目标、双会话复用）
+  - mode A 回归：matrix 39/51 0 FAIL + UDP ALL_PASS；全门禁 + README 双模式章节（两个片段都编译）+ CHANGELOG
+
+---
+
 ## 测试记录模板
 
 每次测试后在 PROGRESS.md 中记录：

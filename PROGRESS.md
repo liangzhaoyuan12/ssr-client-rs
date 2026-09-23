@@ -848,3 +848,45 @@ GOALS 允许 `cargo public-api` 或人工过 pub 清单——本机未装 cargo-
 
 **结论**: 12/12 全绿，本项目对 GOALS 当前目标（主线准入）视为完成。
 push 按用户指示（**不主动 push**）；远端 origin=https://cnb.cool/liangzhaoyuan12/ssr-client-rs。
+
+### ✅ Phase U: 双模式集成 — 系统端口 / 数据管道（2026-09-23）
+
+**需求（用户）**: 代理后的数据获取可选——直接代理到系统端口（模式 A，
+原样）或暴露数据接口（模式 B，新），供调用方做自定义 DNS、路由模式、
+字节级中间件。
+
+**设计决策**:
+1. **建链抽取**: `establish_tunnel(config, addr, port) -> Tunnel` 从
+   `handle_connection` 的 SOCKS5 后半段原样抽出（connect→cipher→obfs
+   (AEAD 降级)→obfs 握手→addr_pkg→protocol），模式 A/B 共用 → wire
+   字节不可能分叉。顺序保持：握手→SOCKS5 success reply→relay。
+2. **ObfsRelay 泛型化**: 结构体参数化本地侧半区
+   `ObfsRelay<LR, LW>`（原为 OwnedReadHalf/WriteHalf 具体类型）。
+   - 模式 A 构造器 `new(TcpStream, Tunnel)` → into_split →
+     `ObfsRelay<OwnedReadHalf, OwnedWriteHalf>`（与改动前**类型完全一致**）
+   - 模式 B 构造器 `new_piped(DuplexStream, Tunnel)` → tokio::io::split
+   - `run()` 泵体（500 行 select 循环）零改动，两模式执行同一份字节逻辑
+3. **SsrSession**: `duplex(64KB)` + `tokio::spawn(run)` 泵。会话端
+   `AsyncRead/AsyncWrite` 委托 duplex；泵出错时字符串存
+   `Arc<Mutex<Option<String>>>`，read 的 EOF / write 的 Err 会替换成
+   存储的错误（不留静默 EOF）；`finish()` 关用户端→排干→等泵→透出错误；
+   `Drop`=abort 泵（remote socket 随之 FIN）。
+4. `open_session(TargetAddr)`（根重导出类型）内部转
+   socks5::TargetAddress+port；Domain 变体 `Vec<u8>` 转换。
+
+**测试调试记录**: e2e 首跑 session1(IPv4) 成功（SSR_DEBUG trace 显示
+62 字节 HTTP 响应完整流回），session2 `Domain("localhost")` 被 SSR
+服务端解析到 **::1** 而测试 origin 只绑 127.0.0.1 → 服务端日志
+`connection refused tunnel_stage_resolve_host` → 纯夹具问题，origin 改
+双栈 `[::]` 绑定（带回退）后 2/2 过。教训：服务端日志 + SSR_DEBUG=1 是
+管道诊断的正确组合。
+
+**验收（全部实测）**:
+- `cargo test`: **13 套件 ok / 0 FAILED**（含 pipe_session 拒绝路径默认测）
+- `cargo test --test pipe_session -- --ignored`: **ok**（真实 ssr-server、
+  生产组合 aes-256-cfb/auth_aes128_sha1/tls1.2_ticket_auth、IPv4+Domain
+  双会话 200 OK、finish 干净、服务端 0 错误日志）
+- Mode A 回归: matrix **39/51 + 12 SKIP + 0 FAIL**、UDP_E2E_ALL_PASS
+- fmt 0、clippy -D rc=0、panic script 0、doc warnings 0、release 0 warning
+- README 两个 rust 片段（模式 A/B）分别编译 rc=0；CHANGELOG Added 记录
+- GOALS U1/U2 已勾选

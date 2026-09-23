@@ -9,10 +9,12 @@ pub mod udp_relay;
 // 4. Establishes a tunnel to the remote SSR server
 // 5. Relays traffic through the tunnel
 
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 
@@ -122,9 +124,9 @@ impl SsrClient {
 /// and unwraps downstream data with obfs decode before sending to client.
 /// Uses a single obfs instance shared between handshake and relay.
 /// Also handles protocol framing and cipher encryption/decryption.
-struct ObfsRelay {
-    local_read: tokio::net::tcp::OwnedReadHalf,
-    local_write: tokio::net::tcp::OwnedWriteHalf,
+struct ObfsRelay<LR, LW> {
+    local_read: LR,
+    local_write: LW,
     remote_read: tokio::net::tcp::OwnedReadHalf,
     remote_write: tokio::net::tcp::OwnedWriteHalf,
     obfs: Box<dyn crate::obfs::Obfs>,
@@ -142,18 +144,47 @@ struct ObfsRelay {
     idle_timeout: u32,
 }
 
-impl ObfsRelay {
-    /// Create a new ObfsRelay with a shared obfs instance.
-    fn new(
-        local: TcpStream,
-        remote: TcpStream,
-        obfs: Box<dyn crate::obfs::Obfs>,
-        cipher_env: crate::crypto::cipher_env::CipherEnv,
-        mut protocol: Box<dyn crate::protocol::Protocol>,
-        addr_pkg: Vec<u8>,
-        idle_timeout: u32,
-    ) -> SsrResult<Self> {
+/// Mode A: local side is the accepted SOCKS5 `TcpStream`.
+impl ObfsRelay<tokio::net::tcp::OwnedReadHalf, tokio::net::tcp::OwnedWriteHalf> {
+    /// Build the relay around an accepted SOCKS5 connection and a freshly
+    /// established [`Tunnel`].
+    fn new(local: TcpStream, tunnel: Tunnel) -> SsrResult<Self> {
         let (local_read, local_write) = local.into_split();
+        Self::assemble(local_read, local_write, tunnel)
+    }
+}
+
+/// Mode B (data pipe): local side is the in-memory duplex whose other half
+/// is handed to [`SsrSession`].
+impl
+    ObfsRelay<
+        tokio::io::ReadHalf<tokio::io::DuplexStream>,
+        tokio::io::WriteHalf<tokio::io::DuplexStream>,
+    >
+{
+    fn new_piped(local: tokio::io::DuplexStream, tunnel: Tunnel) -> SsrResult<Self> {
+        let (local_read, local_write) = tokio::io::split(local);
+        Self::assemble(local_read, local_write, tunnel)
+    }
+}
+
+/// Shared construction plus the relay pump — generic over the local-side
+/// halves, so both integration modes execute the byte-identical `run()` body.
+impl<LR, LW> ObfsRelay<LR, LW>
+where
+    LR: AsyncRead + Unpin + Send,
+    LW: AsyncWrite + Unpin + Send,
+{
+    /// Assemble the relay from a [`Tunnel`]'s parts.
+    fn assemble(local_read: LR, local_write: LW, tunnel: Tunnel) -> SsrResult<Self> {
+        let Tunnel {
+            remote,
+            obfs,
+            env: cipher_env,
+            mut protocol,
+            addr_pkg,
+            idle_timeout,
+        } = tunnel;
         let (remote_read, remote_write) = remote.into_split();
 
         // Create the stateful encrypt context (generates random IV).
@@ -497,17 +528,62 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
         )));
     }
 
-    // Step 3: Establish tunnel to remote SSR server
+    // Step 3: Establish the tunnel to the SSR server (connect, cipher, obfs,
+    // obfs handshake, address package, protocol) — the same builder Mode B
+    // (data pipe) uses, so the two modes cannot drift apart.
     ssr_debug!(
         "[conn] CONNECT {}:{}",
         connect_req.addr.display(),
         connect_req.port
     );
+    let tunnel = establish_tunnel(config, &connect_req.addr, connect_req.port).await?;
 
-    let mut remote_stream = connect_to_ssr_server(config).await?;
+    // Step 4: Send SOCKS5 success reply to client (the obfs handshake inside
+    // establish_tunnel has completed by now, matching the historical order:
+    // handshake → success reply → relay).
+    let reply = build_success_reply(connect_req.addr.atyp());
+    stream.write_all(&reply).await?;
+    ssr_debug!("[conn] Sent SOCKS5 success reply");
+
+    // Step 5: Relay data between client and SSR server (with obfs encode/decode)
+    ssr_debug!("[conn] Starting obfs relay");
+    let relay = ObfsRelay::new(stream, tunnel)?;
+    let (up, down) = relay.run().await?;
+
+    ssr_debug!("[conn] Relay finished: upstream={up}, downstream={down}");
+    Ok(())
+}
+
+/// Everything one SSR connection needs once the target is known: the socket
+/// to the SSR server plus the per-connection state machines and the SSR
+/// address package.
+///
+/// Produced by [`establish_tunnel`], which is shared by the SOCKS5 path
+/// (`handle_connection`, Mode A) and [`SsrClient::open_session`] (Mode B).
+struct Tunnel {
+    remote: TcpStream,
+    obfs: Box<dyn crate::obfs::Obfs>,
+    env: crate::crypto::cipher_env::CipherEnv,
+    protocol: Box<dyn crate::protocol::Protocol>,
+    addr_pkg: Vec<u8>,
+    idle_timeout: u32,
+}
+
+/// Connect to the SSR server and build every per-connection pipeline piece
+/// for `config`: cipher environment, obfs instance (with the AEAD→plain
+/// downgrade), the obfs handshake when the obfs defines one, the SSR address
+/// package for `addr:port`, and the protocol plugin.
+///
+/// Extracted from the SOCKS5 connection path verbatim; both integration
+/// modes call it so the bytes they put on the wire are identical.
+async fn establish_tunnel(
+    config: &SsrClientConfig,
+    addr: &socks5::TargetAddress,
+    port: u16,
+) -> SsrResult<Tunnel> {
+    let mut remote = connect_to_ssr_server(config).await?;
     ssr_debug!("[conn] Connected to SSR server");
 
-    // Create cipher and obfs instances
     use crate::crypto::aead::AeadCipher;
     use crate::crypto::cipher_env::CipherEnv;
     let env = CipherEnv::with_method(&config.password, config.method)?;
@@ -515,7 +591,7 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
     let is_aead = AeadCipher::is_aead(method);
 
     // AEAD downgrade (ssr_executive.c:175-179): plain obfs + origin protocol
-    let mut obfs_inst = if is_aead {
+    let mut obfs = if is_aead {
         Box::new(crate::obfs::plain::PlainObfs::new()) as Box<dyn crate::obfs::Obfs>
     } else {
         crate::obfs::create_obfs(
@@ -525,18 +601,18 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
             &config.obfs_param,
         )
     };
-    obfs_inst.set_key(env.key().to_vec());
+    obfs.set_key(env.key().to_vec());
     ssr_debug!(
         "[conn] Created obfs instance{}",
         if is_aead { " (AEAD→plain)" } else { "" }
     );
 
-    // Step 4: Perform the obfs handshake, if this obfs uses one.
-    // Plain / HTTP obfs carry their framing with the first data packet and send
-    // nothing up front, so waiting for a response would just stall for the timeout.
-    if obfs_inst.needs_handshake() {
+    // Obfs handshake, if this obfs uses one. Plain / HTTP obfs carry their
+    // framing with the first data packet and send nothing up front, so
+    // waiting for a response would just stall for the timeout.
+    if obfs.needs_handshake() {
         ssr_debug!("[conn] Starting obfs handshake");
-        match perform_obfs_handshake(&mut remote_stream, &mut obfs_inst).await {
+        match perform_obfs_handshake(&mut remote, &mut obfs).await {
             Ok(()) => ssr_debug!("[conn] Obfs handshake completed"),
             Err(e) => {
                 ssr_debug!("[conn] Obfs handshake failed: {e}");
@@ -545,35 +621,217 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
         }
     }
 
-    // Step 5: Send SOCKS5 success reply to client
-    let reply = build_success_reply(connect_req.addr.atyp());
-    stream.write_all(&reply).await?;
-    ssr_debug!("[conn] Sent SOCKS5 success reply");
-
-    // Step 5.5: Build address package (ATYP + addr + port) for SSR protocol
-    // The SSR protocol expects the address as the first data payload
-    let addr_pkg = build_address_package(&connect_req.addr, connect_req.port);
+    // Address package (ATYP + addr + port): the SSR protocol expects the
+    // address as the first data payload.
+    let addr_pkg = build_address_package(addr, port);
     ssr_debug!("[conn] Address package: {} bytes", addr_pkg.len());
 
-    // Step 6: Relay data between client and SSR server (with obfs encode/decode)
-    //
-    // AEAD downgrade already applied above (obfs=plain, protocol=origin).
     let protocol = create_protocol(config, &env, is_aead)?;
-
-    ssr_debug!("[conn] Starting obfs relay");
-    let relay = ObfsRelay::new(
-        stream,
-        remote_stream,
-        obfs_inst,
+    Ok(Tunnel {
+        remote,
+        obfs,
         env,
         protocol,
         addr_pkg,
-        config.idle_timeout,
-    )?;
-    let (up, down) = relay.run().await?;
+        idle_timeout: config.idle_timeout,
+    })
+}
 
-    ssr_debug!("[conn] Relay finished: upstream={up}, downstream={down}");
-    Ok(())
+impl SsrClient {
+    /// Open a data pipe to `target` through the SSR server — integration
+    /// Mode B. No local port is bound.
+    ///
+    /// Returns an [`SsrSession`], an `AsyncRead + AsyncWrite` stream of the
+    /// PLAINTEXT connection to `target`: framing, encryption and obfuscation
+    /// happen underneath. Use it from your own front-end (custom SOCKS5/HTTP
+    /// listener, rule engine) when you need to decide routing per connection
+    /// (`target` can be a `Domain` for server-side DNS, or an `IPv4`/`IPv6`
+    /// you resolved yourself with a custom resolver) or to inspect or modify
+    /// bytes in flight by wrapping the session in middleware.
+    ///
+    /// [`SsrClient::start`] is the other mode: it binds
+    /// `listen_address:listen_port` and speaks SOCKS5/UDP ASSOCIATE for you.
+    /// Both modes share one tunnel builder, so the bytes they put on the wire
+    /// are identical.
+    ///
+    /// The obfs handshake completes before this returns, so connect/handshake
+    /// failures surface here as `Err`. TCP only — SOCKS5 UDP ASSOCIATE
+    /// remains Mode A.
+    ///
+    /// # Errors
+    ///
+    /// - cannot reach the configured SSR server ([`SsrError::Timeout`] /
+    ///   [`SsrError::Connection`])
+    /// - cipher/protocol/obfs construction fails for this configuration
+    /// - the obfs handshake fails or times out
+    pub async fn open_session(&self, target: crate::crypto::TargetAddr) -> SsrResult<SsrSession> {
+        use crate::crypto::TargetAddr;
+        let (addr, port) = match target {
+            TargetAddr::IPv4(ip, p) => (socks5::TargetAddress::IPv4(ip), p),
+            TargetAddr::IPv6(ip, p) => (socks5::TargetAddress::IPv6(ip), p),
+            TargetAddr::Domain(name, p) => (socks5::TargetAddress::Domain(name.into()), p),
+        };
+        let tunnel = establish_tunnel(&self.config, &addr, port).await?;
+
+        // The relay pump and the caller share an in-memory duplex: the pump
+        // runs the exact Mode-A `ObfsRelay::run` body against `pump_io`, and
+        // the caller reads/writes plaintext on `user_io`.
+        let (user_io, pump_io) = tokio::io::duplex(64 * 1024);
+        let pump_err = Arc::new(std::sync::Mutex::new(None::<String>));
+        let err_slot = Arc::clone(&pump_err);
+        let pump = tokio::spawn(async move {
+            let result = match ObfsRelay::new_piped(pump_io, tunnel) {
+                Ok(relay) => relay.run().await,
+                Err(e) => Err(e),
+            };
+            if let Err(e) = result {
+                ssr_debug!("[pipe] relay pump failed: {e}");
+                *err_slot
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(e.to_string());
+            }
+        });
+        Ok(SsrSession {
+            io: Some(user_io),
+            pump: Some(pump),
+            pump_err,
+        })
+    }
+}
+
+/// One tunneled TCP connection to a target — integration Mode B, returned by
+/// [`SsrClient::open_session`].
+///
+/// Reads yield the target connection's plaintext; writes inject plaintext
+/// into it. The SSR framing/encryption/obfuscation runs in a background pump
+/// sharing this stream, so the session behaves like a plain TCP stream:
+/// split it with `tokio::io::split`, wrap it in any `AsyncRead`/`AsyncWrite`
+/// middleware, or drive it directly.
+///
+/// Dropping the session aborts the pump and closes the tunnel. Call
+/// [`SsrSession::finish`] instead to close gracefully (drain the server side)
+/// and surface any relay error that occurred mid-stream.
+#[derive(Debug)]
+pub struct SsrSession {
+    io: Option<tokio::io::DuplexStream>,
+    pump: Option<tokio::task::JoinHandle<()>>,
+    pump_err: Arc<std::sync::Mutex<Option<String>>>,
+}
+
+impl SsrSession {
+    /// Close the user end, let the pump drain and shut down the tunnel, then
+    /// return any error the relay hit while it was running.
+    ///
+    /// # Errors
+    ///
+    /// The relay pump's error, if it failed mid-stream (e.g. the SSR server
+    /// closed or an obfs/protocol decode failed); otherwise `Ok(())`.
+    pub async fn finish(mut self) -> SsrResult<()> {
+        drop(self.io.take());
+        if let Some(handle) = self.pump.take() {
+            handle
+                .await
+                .map_err(|e| SsrError::Connection(format!("relay pump task failed: {e}")))?;
+        }
+        let stored = self
+            .pump_err
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        match stored {
+            Some(msg) => Err(SsrError::Connection(format!("relay failed: {msg}"))),
+            None => Ok(()),
+        }
+    }
+
+    /// Take the pump's stored error, if any (used to turn a silent duplex EOF
+    /// into a diagnosable `Err`).
+    fn take_pump_error(&self) -> Option<String> {
+        self.pump_err
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+    }
+}
+
+impl AsyncRead for SsrSession {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        let io = match this.io.as_mut() {
+            Some(io) => io,
+            // `finish()` consumed the user end; nothing left to read.
+            None => return Poll::Ready(Ok(())),
+        };
+        match Pin::new(io).poll_read(cx, buf) {
+            Poll::Ready(Ok(())) if buf.filled().is_empty() => {
+                // EOF: if the pump died with an error, surface it instead of
+                // a silent close.
+                match this.take_pump_error() {
+                    Some(msg) => Poll::Ready(Err(std::io::Error::other(msg))),
+                    None => Poll::Ready(Ok(())),
+                }
+            }
+            other => other,
+        }
+    }
+}
+
+impl AsyncWrite for SsrSession {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let this = self.get_mut();
+        let io = match this.io.as_mut() {
+            Some(io) => io,
+            None => {
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::NotConnected,
+                    "session finished",
+                )))
+            }
+        };
+        match Pin::new(io).poll_write(cx, buf) {
+            Poll::Ready(Err(e)) => match this.take_pump_error() {
+                Some(msg) => Poll::Ready(Err(std::io::Error::other(msg))),
+                None => Poll::Ready(Err(e)),
+            },
+            other => other,
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        match this.io.as_mut() {
+            Some(io) => Pin::new(io).poll_flush(cx),
+            None => Poll::Ready(Ok(())),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        match this.io.as_mut() {
+            Some(io) => Pin::new(io).poll_shutdown(cx),
+            None => Poll::Ready(Ok(())),
+        }
+    }
+}
+
+impl Drop for SsrSession {
+    fn drop(&mut self) {
+        // Abort the pump (it holds the socket to the SSR server; aborting
+        // drops it, which closes the tunnel), then the user end drops with
+        // the remaining fields. `finish()` takes the handle first, so a
+        // graceful close is never aborted.
+        if let Some(handle) = self.pump.take() {
+            handle.abort();
+        }
+    }
 }
 
 /// Build the protocol plugin for one connection/datagram stream.
