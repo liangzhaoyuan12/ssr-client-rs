@@ -57,7 +57,7 @@ tokio = { version = "1", features = ["full"] }
 
 ```rust,no_run
 use ssr_client_rs::config_json::config_from_json;
-use ssr_client_rs::{SsrClient, SsrClientConfig};
+use ssr_client_rs::{CipherType, ObfsType, ProtocolType, SsrClient, SsrClientConfig};
 
 #[tokio::main]
 async fn main() {
@@ -79,9 +79,9 @@ async fn main() {
         server: "example.com".into(),
         server_port: 8388,
         password: "secret".into(),
-        method: "aes-256-cfb".into(),
-        protocol: "auth_aes128_sha1".into(),
-        obfs: "tls1.2_ticket_auth".into(),
+        method: CipherType::AES256CFB,
+        protocol: ProtocolType::AuthAES128SHA1,
+        obfs: ObfsType::TLS12TicketAuth,
         ..Default::default()
     };
 
@@ -115,10 +115,10 @@ JSON keys are identical to the `SsrClientConfig` fields
 | `listen_address` | string | `127.0.0.1` | local SOCKS5 bind address |
 | `listen_port` | u16 | `1080` | local SOCKS5 bind port |
 | `password` | string | — | cipher password |
-| `method` | string | — | cipher name, e.g. `aes-256-cfb` |
-| `protocol` | string | — | protocol name, e.g. `auth_aes128_sha1` |
+| `method` | `CipherType` | — | cipher name, e.g. `aes-256-cfb` (JSON holds the name; parsed via `from_name`) |
+| `protocol` | `ProtocolType` | — | protocol name, e.g. `auth_aes128_sha1` (absent → `Origin`) |
 | `protocol_param` | string | `""` | protocol params (`uid:key…`) |
-| `obfs` | string | — | obfs name, e.g. `tls1.2_ticket_auth` |
+| `obfs` | `ObfsType` | `Plain` | obfs name, e.g. `tls1.2_ticket_auth` (JSON holds the name) |
 | `obfs_param` | string | `""` | obfs params (host…); empty = auto |
 | `udp` | bool | `false` | enable UDP ASSOCIATE relay |
 | `idle_timeout` | u32 | `300` | seconds before an idle TCP tunnel is reclaimed (`0` disables) |

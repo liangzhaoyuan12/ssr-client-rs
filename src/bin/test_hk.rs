@@ -2,6 +2,7 @@ use ssr_client_rs::config::SsrClientConfig;
 use ssr_client_rs::crypto::cipher_env::CipherEnv;
 use ssr_client_rs::protocol::auth_aes128::AuthAES128;
 use ssr_client_rs::protocol::{Protocol, ServerInfo};
+use ssr_client_rs::{CipherType, ObfsType, ProtocolType};
 
 fn main() {
     let config = SsrClientConfig {
@@ -10,10 +11,10 @@ fn main() {
         listen_address: "0.0.0.0".into(),
         listen_port: 1080,
         password: "test-password".into(),
-        method: "aes-256-cfb".into(),
-        protocol: "auth_aes128_sha1".into(),
+        method: CipherType::AES256CFB,
+        protocol: ProtocolType::AuthAES128SHA1,
         protocol_param: "".into(),
-        obfs: "tls1.2_ticket_auth".into(),
+        obfs: ObfsType::TLS12TicketAuth,
         obfs_param: "".into(),
         udp: true,
         idle_timeout: 300,
@@ -27,7 +28,7 @@ fn main() {
 
     // Test 1: Cipher
     println!("[1] Cipher (aes-256-cfb)...");
-    let env = CipherEnv::new(&config.password, &config.method).unwrap();
+    let env = CipherEnv::with_method(&config.password, config.method).unwrap();
     let data = b"test data for google access";
     let encrypted = env.encrypt(data).unwrap();
     let decrypted = env.decrypt(&encrypted).unwrap();
@@ -59,7 +60,7 @@ fn main() {
 
     // Test 3: Full pipeline
     println!("[3] Full pipeline (protocol + cipher)...");
-    let env2 = CipherEnv::new(&config.password, &config.method).unwrap();
+    let env2 = CipherEnv::with_method(&config.password, config.method).unwrap();
     let framed2 = protocol.client_pre_encrypt(target).unwrap();
     let encrypted2 = env2.encrypt(&framed2).unwrap();
     let decrypted2 = env2.decrypt(&encrypted2).unwrap();

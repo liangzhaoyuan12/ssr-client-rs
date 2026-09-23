@@ -127,6 +127,7 @@ fn per_op<F: FnMut()>(iters: usize, mut f: F) -> (u64, f64) {
 }
 
 fn p3_protocol_obfs(iters: usize) {
+    use ssr_client_rs::crypto::ObfsType;
     use ssr_client_rs::obfs::create_obfs;
     use ssr_client_rs::protocol::auth_aes128::AuthAES128;
     use ssr_client_rs::protocol::auth_chain::AuthChainA;
@@ -177,7 +178,12 @@ fn p3_protocol_obfs(iters: usize) {
 
     // obfs encode/decode: plain (stateless) + http_simple (steady) + tls.
     for name in ["plain", "http_simple", "tls1.2_ticket_fastauth"] {
-        let mut o = create_obfs(name, "bench.example.com", 443, "").unwrap();
+        let mut o = create_obfs(
+            ObfsType::from_name(name).unwrap(),
+            "bench.example.com",
+            443,
+            "",
+        );
         o.set_key(vec![0x42u8; 16]);
         // drive to steady state
         let _ = o.client_encode(&[0u8; 8]).unwrap();

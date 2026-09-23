@@ -1,3 +1,5 @@
+use crate::crypto::{CipherType, ObfsType, ProtocolType};
+
 /// SSR client configuration.
 ///
 /// Construct directly, or load from an ssr-n style JSON file via
@@ -14,14 +16,14 @@ pub struct SsrClientConfig {
     pub listen_port: u16,
     /// Encryption password
     pub password: String,
-    /// Encryption method name (e.g. "aes-256-cfb")
-    pub method: String,
-    /// Protocol name (e.g. "auth_aes128_sha1")
-    pub protocol: String,
+    /// Encryption method (e.g. `CipherType::AES256CFB` for `aes-256-cfb`)
+    pub method: CipherType,
+    /// Protocol (e.g. `ProtocolType::AuthAES128SHA1`)
+    pub protocol: ProtocolType,
     /// Protocol parameters
     pub protocol_param: String,
-    /// Obfuscation name (e.g. "tls1.2_ticket_auth")
-    pub obfs: String,
+    /// Obfuscation (e.g. `ObfsType::TLS12TicketAuth`)
+    pub obfs: ObfsType,
     /// Obfuscation parameters
     pub obfs_param: String,
     /// Whether to enable UDP relay
@@ -50,10 +52,10 @@ impl Default for SsrClientConfig {
             listen_address: "127.0.0.1".to_string(),
             listen_port: 1080,
             password: String::new(),
-            method: String::new(),
-            protocol: String::new(),
+            method: CipherType::None,
+            protocol: ProtocolType::Origin,
             protocol_param: String::new(),
-            obfs: String::new(),
+            obfs: ObfsType::Plain,
             obfs_param: String::new(),
             udp: false,
             idle_timeout: 300,
@@ -72,10 +74,10 @@ impl SsrClientConfig {
             listen_address: "0.0.0.0".to_string(),
             listen_port: 1080,
             password: "test-password".to_string(),
-            method: "aes-256-cfb".to_string(),
-            protocol: "auth_aes128_sha1".to_string(),
+            method: CipherType::AES256CFB,
+            protocol: ProtocolType::AuthAES128SHA1,
             protocol_param: String::new(),
-            obfs: "tls1.2_ticket_auth".to_string(),
+            obfs: ObfsType::TLS12TicketAuth,
             obfs_param: String::new(),
             udp: true,
             idle_timeout: 300,

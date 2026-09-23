@@ -5,6 +5,7 @@ pub mod plain;
 /// TLS 1.2 session-ticket obfuscation; mirrors `ssr-n/src/obfs/tls1.2_ticket.c`.
 pub mod tls_ticket;
 
+use crate::crypto::ObfsType;
 use crate::error::SsrResult;
 
 /// Obfuscation trait — each obfs implements:
@@ -39,43 +40,46 @@ pub trait Obfs: Send {
     }
 }
 
-/// Create an obfs instance by name.
+/// Create an obfs instance for `obfs`.
+///
+/// Every `ObfsType` variant has an implementation, so construction is
+/// infallible. Name strings are parsed by [`ObfsType::from_name`] at the
+/// config boundary instead.
 pub fn create_obfs(
-    name: &str,
+    obfs: ObfsType,
     server_host: &str,
     server_port: u16,
     extra_param: &str,
-) -> Option<Box<dyn Obfs>> {
-    match name {
-        "plain" => Some(Box::new(plain::PlainObfs::new())),
-        "http_simple" => Some(Box::new(http_simple::HttpSimpleObfs::new(
+) -> Box<dyn Obfs> {
+    match obfs {
+        ObfsType::Plain => Box::new(plain::PlainObfs::new()),
+        ObfsType::HTTPSimple => Box::new(http_simple::HttpSimpleObfs::new(
             server_host.to_string(),
             server_port,
             extra_param.to_string(),
-        ))),
-        "http_post" => Some(Box::new(http_simple::HttpPostObfs::new(
+        )),
+        ObfsType::HTTPPost => Box::new(http_simple::HttpPostObfs::new(
             server_host.to_string(),
             server_port,
             extra_param.to_string(),
-        ))),
-        "http_mix" => Some(Box::new(http_simple::HttpMixObfs::new(
+        )),
+        ObfsType::HTTPMix => Box::new(http_simple::HttpMixObfs::new(
             server_host.to_string(),
             server_port,
             extra_param.to_string(),
-        ))),
-        "tls1.2_ticket_auth" => Some(Box::new(tls_ticket::Tls12TicketAuthObfs::new(
+        )),
+        ObfsType::TLS12TicketAuth => Box::new(tls_ticket::Tls12TicketAuthObfs::new(
             server_host.to_string(),
             server_port,
             extra_param.to_string(),
             false,
-        ))),
-        "tls1.2_ticket_fastauth" => Some(Box::new(tls_ticket::Tls12TicketAuthObfs::new(
+        )),
+        ObfsType::TLS12TicketFastAuth => Box::new(tls_ticket::Tls12TicketAuthObfs::new(
             server_host.to_string(),
             server_port,
             extra_param.to_string(),
             true,
-        ))),
-        _ => None,
+        )),
     }
 }
 
@@ -85,9 +89,7 @@ mod tests {
 
     #[test]
     fn test_create_obfs_plain() {
-        let obfs = create_obfs("plain", "example.com", 80, "");
-        assert!(obfs.is_some());
-        let obfs = obfs.unwrap();
+        let obfs = create_obfs(ObfsType::Plain, "example.com", 80, "");
         assert_eq!(obfs.get_overhead(), 0);
         assert!(!obfs.need_feedback());
         assert!(!obfs.needs_handshake());
@@ -95,9 +97,7 @@ mod tests {
 
     #[test]
     fn test_create_obfs_http_simple() {
-        let obfs = create_obfs("http_simple", "example.com", 80, "");
-        assert!(obfs.is_some());
-        let obfs = obfs.unwrap();
+        let obfs = create_obfs(ObfsType::HTTPSimple, "example.com", 80, "");
         assert_eq!(obfs.get_overhead(), 0);
         assert!(!obfs.need_feedback());
         assert!(!obfs.needs_handshake());
@@ -105,9 +105,7 @@ mod tests {
 
     #[test]
     fn test_create_obfs_tls_ticket() {
-        let obfs = create_obfs("tls1.2_ticket_auth", "example.com", 443, "");
-        assert!(obfs.is_some());
-        let obfs = obfs.unwrap();
+        let obfs = create_obfs(ObfsType::TLS12TicketAuth, "example.com", 443, "");
         assert_eq!(obfs.get_overhead(), 5);
         assert!(obfs.need_feedback());
         assert!(obfs.needs_handshake());
@@ -117,17 +115,26 @@ mod tests {
     fn test_only_tls_ticket_needs_handshake() {
         // Any obfs that does NOT handshake must be safe to relay into immediately;
         // guard against a future variant silently opting into the TLS path.
-        for name in ["plain", "http_simple", "http_post", "http_mix"] {
-            let obfs = create_obfs(name, "example.com", 80, "").unwrap();
-            assert!(!obfs.needs_handshake(), "{name} should not handshake");
+        for obfs_type in [
+            ObfsType::Plain,
+            ObfsType::HTTPSimple,
+            ObfsType::HTTPPost,
+            ObfsType::HTTPMix,
+        ] {
+            let obfs = create_obfs(obfs_type, "example.com", 80, "");
+            assert!(
+                !obfs.needs_handshake(),
+                "{obfs_type:?} should not handshake"
+            );
         }
-        let obfs = create_obfs("tls1.2_ticket_auth", "example.com", 443, "").unwrap();
+        let obfs = create_obfs(ObfsType::TLS12TicketAuth, "example.com", 443, "");
         assert!(obfs.needs_handshake());
     }
 
     #[test]
     fn test_create_obfs_unknown() {
-        let obfs = create_obfs("unknown_obfs", "example.com", 80, "");
-        assert!(obfs.is_none());
+        // Unknown names are rejected when the config is parsed, not by the
+        // factory — the enum has no hole to fall through.
+        assert!(ObfsType::from_name("unknown_obfs").is_err());
     }
 }

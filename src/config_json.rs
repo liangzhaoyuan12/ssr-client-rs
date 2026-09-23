@@ -8,6 +8,7 @@
 //! dependency is used so the client builds on loongarch64 without fetching crates.
 
 use crate::config::SsrClientConfig;
+use crate::crypto::{CipherType, ObfsType, ProtocolType};
 
 /// A parsed JSON value (only the subset needed for config files).
 #[derive(Debug, Clone, PartialEq)]
@@ -306,16 +307,16 @@ pub fn config_from_json(text: &str) -> Result<SsrClientConfig, String> {
         cfg.password = v.to_string();
     }
     if let Some(v) = obj.get("method").and_then(Json::as_str) {
-        cfg.method = v.to_string();
+        cfg.method = CipherType::from_name(v).map_err(|e| e.to_string())?;
     }
     if let Some(v) = obj.get("protocol").and_then(Json::as_str) {
-        cfg.protocol = v.to_string();
+        cfg.protocol = ProtocolType::from_name(v).map_err(|e| e.to_string())?;
     }
     if let Some(v) = obj.get("protocol_param").and_then(Json::as_str) {
         cfg.protocol_param = v.to_string();
     }
     if let Some(v) = obj.get("obfs").and_then(Json::as_str) {
-        cfg.obfs = v.to_string();
+        cfg.obfs = ObfsType::from_name(v).map_err(|e| e.to_string())?;
     }
     if let Some(v) = obj.get("obfs_param").and_then(Json::as_str) {
         cfg.obfs_param = v.to_string();
@@ -375,9 +376,9 @@ mod tests {
         assert_eq!(cfg.server_port, 8388);
         assert_eq!(cfg.listen_port, 1080);
         assert_eq!(cfg.password, "pw");
-        assert_eq!(cfg.method, "aes-256-cfb");
-        assert_eq!(cfg.protocol, "auth_aes128_sha1");
-        assert_eq!(cfg.obfs, "tls1.2_ticket_auth");
+        assert_eq!(cfg.method, CipherType::AES256CFB);
+        assert_eq!(cfg.protocol, ProtocolType::AuthAES128SHA1);
+        assert_eq!(cfg.obfs, ObfsType::TLS12TicketAuth);
         assert!(cfg.udp);
         assert_eq!(cfg.idle_timeout, 120);
     }

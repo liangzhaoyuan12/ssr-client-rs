@@ -8,6 +8,7 @@
 //! Results land in BENCH.md (GOALS P1).
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use ssr_client_rs::crypto::ObfsType;
 use ssr_client_rs::obfs::{create_obfs, Obfs};
 use ssr_client_rs::utils::hash::hmac_sha1;
 use std::time::Duration;
@@ -25,7 +26,12 @@ const OBFS: &[&str] = &[
 ];
 
 fn make(name: &str) -> Box<dyn Obfs> {
-    create_obfs(name, "bench.example.com", 443, "").expect("known obfs name")
+    create_obfs(
+        ObfsType::from_name(name).expect("known obfs name"),
+        "bench.example.com",
+        443,
+        "",
+    )
 }
 
 /// Synthesise a server handshake response that passes the TLS obfs

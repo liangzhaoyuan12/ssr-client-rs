@@ -510,9 +510,8 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
     // Create cipher and obfs instances
     use crate::crypto::aead::AeadCipher;
     use crate::crypto::cipher_env::CipherEnv;
-    use crate::crypto::types::CipherType;
-    let env = CipherEnv::new(&config.password, &config.method)?;
-    let method = CipherType::from_name(&config.method)?;
+    let env = CipherEnv::with_method(&config.password, config.method)?;
+    let method = config.method;
     let is_aead = AeadCipher::is_aead(method);
 
     // AEAD downgrade (ssr_executive.c:175-179): plain obfs + origin protocol
@@ -520,12 +519,11 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
         Box::new(crate::obfs::plain::PlainObfs::new()) as Box<dyn crate::obfs::Obfs>
     } else {
         crate::obfs::create_obfs(
-            &config.obfs,
+            config.obfs,
             &config.server,
             config.server_port,
             &config.obfs_param,
         )
-        .ok_or_else(|| SsrError::Obfs(format!("Unsupported obfs: {}", config.obfs)))?
     };
     obfs_inst.set_key(env.key().to_vec());
     ssr_debug!(
@@ -609,34 +607,36 @@ pub(crate) fn create_protocol(
         let mut srv = srv;
         // Set overhead based on protocol (C: auth_chain_a_get_overhead returns 4)
         if matches!(
-            config.protocol.as_str(),
-            "auth_chain_a"
-                | "auth_chain_b"
-                | "auth_chain_c"
-                | "auth_chain_d"
-                | "auth_chain_e"
-                | "auth_chain_f"
+            config.protocol,
+            crate::crypto::ProtocolType::AuthChainA
+                | crate::crypto::ProtocolType::AuthChainB
+                | crate::crypto::ProtocolType::AuthChainC
+                | crate::crypto::ProtocolType::AuthChainD
+                | crate::crypto::ProtocolType::AuthChainE
+                | crate::crypto::ProtocolType::AuthChainF
         ) {
             srv.overhead = 4;
         }
-        match config.protocol.as_str() {
-            "auth_aes128_md5" => Box::new(AuthAES128::new_md5(srv)),
-            "auth_aes128_sha1" => Box::new(AuthAES128::new_sha1(srv)),
-            "auth_sha1_v4" => Box::new(AuthSHA1V4::new(srv)),
-            "auth_sha1_v2" => Box::new(AuthSHA1V2::new(srv)),
-            "auth_sha1" => Box::new(AuthSHA1::new(srv)),
-            "auth_simple" => Box::new(AuthSimple::new()),
-            "auth_chain_a" => Box::new(AuthChainA::new(srv, "auth_chain_a")),
-            "auth_chain_b" => Box::new(AuthChainB::new(srv)),
-            "auth_chain_c" => Box::new(AuthChainC::new(srv)),
-            "auth_chain_d" => Box::new(AuthChainD::new(srv)),
-            "auth_chain_e" => Box::new(AuthChainE::new(srv)),
-            "auth_chain_f" => Box::new(AuthChainF::new(srv, &config.protocol_param)),
-            "origin" | "" => Box::new(crate::protocol::origin::Origin),
-            other => {
-                return Err(SsrError::Protocol(format!(
-                    "Unsupported protocol '{other}'"
-                )));
+        match config.protocol {
+            crate::crypto::ProtocolType::AuthAES128MD5 => Box::new(AuthAES128::new_md5(srv)),
+            crate::crypto::ProtocolType::AuthAES128SHA1 => Box::new(AuthAES128::new_sha1(srv)),
+            crate::crypto::ProtocolType::AuthSHA1V4 => Box::new(AuthSHA1V4::new(srv)),
+            crate::crypto::ProtocolType::AuthSHA1V2 => Box::new(AuthSHA1V2::new(srv)),
+            crate::crypto::ProtocolType::AuthSHA1 => Box::new(AuthSHA1::new(srv)),
+            crate::crypto::ProtocolType::AuthSimple => Box::new(AuthSimple::new()),
+            crate::crypto::ProtocolType::AuthChainA => {
+                Box::new(AuthChainA::new(srv, "auth_chain_a"))
+            }
+            crate::crypto::ProtocolType::AuthChainB => Box::new(AuthChainB::new(srv)),
+            crate::crypto::ProtocolType::AuthChainC => Box::new(AuthChainC::new(srv)),
+            crate::crypto::ProtocolType::AuthChainD => Box::new(AuthChainD::new(srv)),
+            crate::crypto::ProtocolType::AuthChainE => Box::new(AuthChainE::new(srv)),
+            crate::crypto::ProtocolType::AuthChainF => {
+                Box::new(AuthChainF::new(srv, &config.protocol_param))
+            }
+            crate::crypto::ProtocolType::Origin => Box::new(crate::protocol::origin::Origin),
+            crate::crypto::ProtocolType::VerifySimple => {
+                Box::new(crate::protocol::verify_simple::VerifySimple::new())
             }
         }
     };
@@ -763,6 +763,7 @@ async fn connect_to_ssr_server(config: &SsrClientConfig) -> SsrResult<TcpStream>
 mod tests {
     use super::*;
     use crate::config::SsrClientConfig;
+    use crate::crypto::{CipherType, ObfsType, ProtocolType};
 
     #[test]
     fn test_ssr_client_new() {
@@ -770,9 +771,9 @@ mod tests {
             server: "127.0.0.1".to_string(),
             server_port: 8388,
             password: "password".to_string(),
-            method: "aes-256-cfb".to_string(),
-            protocol: "auth_aes128_sha1".to_string(),
-            obfs: "tls1.2_ticket_auth".to_string(),
+            method: CipherType::AES256CFB,
+            protocol: ProtocolType::AuthAES128SHA1,
+            obfs: ObfsType::TLS12TicketAuth,
             ..Default::default()
         };
         let client = SsrClient::new(config);
@@ -787,9 +788,9 @@ mod tests {
             server: "127.0.0.1".to_string(),
             server_port: 8388,
             password: "password".to_string(),
-            method: "aes-256-cfb".to_string(),
-            protocol: "origin".to_string(),
-            obfs: "plain".to_string(),
+            method: CipherType::AES256CFB,
+            protocol: ProtocolType::Origin,
+            obfs: ObfsType::Plain,
             ..Default::default()
         };
         let client = SsrClient::new(config);
@@ -830,9 +831,9 @@ mod tests {
             server: "127.0.0.1".to_string(),
             server_port: 19876,
             password: "password".to_string(),
-            method: "aes-256-cfb".to_string(),
-            protocol: "origin".to_string(),
-            obfs: "plain".to_string(),
+            method: CipherType::AES256CFB,
+            protocol: ProtocolType::Origin,
+            obfs: ObfsType::Plain,
             ..Default::default()
         };
         let client = SsrClient::new(config);
@@ -858,9 +859,9 @@ mod tests {
             server: "127.0.0.1".to_string(),
             server_port: 19999, // Nothing listening
             password: "password".to_string(),
-            method: "none".to_string(),
-            protocol: "origin".to_string(),
-            obfs: "plain".to_string(),
+            method: CipherType::None,
+            protocol: ProtocolType::Origin,
+            obfs: ObfsType::Plain,
             ..Default::default()
         };
         let result = connect_to_ssr_server(&config).await;

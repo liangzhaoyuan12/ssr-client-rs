@@ -11,6 +11,7 @@ use ssr_client_rs::protocol::auth_simple::AuthSimple;
 use ssr_client_rs::protocol::origin::Origin;
 use ssr_client_rs::protocol::verify_simple::VerifySimple;
 use ssr_client_rs::protocol::{Protocol, ServerInfo};
+use ssr_client_rs::{CipherType, ObfsType, ProtocolType};
 
 fn hk_config() -> SsrClientConfig {
     SsrClientConfig {
@@ -19,10 +20,10 @@ fn hk_config() -> SsrClientConfig {
         listen_address: "0.0.0.0".into(),
         listen_port: 1080,
         password: "test-password".into(),
-        method: "aes-256-cfb".into(),
-        protocol: "auth_aes128_sha1".into(),
+        method: CipherType::AES256CFB,
+        protocol: ProtocolType::AuthAES128SHA1,
         protocol_param: "".into(),
-        obfs: "tls1.2_ticket_auth".into(),
+        obfs: ObfsType::TLS12TicketAuth,
         obfs_param: "".into(),
         udp: true,
         idle_timeout: 300,
@@ -45,9 +46,9 @@ fn test_hk_config_parse() {
     assert_eq!(config.server, "192.0.2.1");
     assert_eq!(config.server_port, 2800);
     assert_eq!(config.password, "test-password");
-    assert_eq!(config.method, "aes-256-cfb");
-    assert_eq!(config.protocol, "auth_aes128_sha1");
-    assert_eq!(config.obfs, "tls1.2_ticket_auth");
+    assert_eq!(config.method, CipherType::AES256CFB);
+    assert_eq!(config.protocol, ProtocolType::AuthAES128SHA1);
+    assert_eq!(config.obfs, ObfsType::TLS12TicketAuth);
 }
 
 #[test]

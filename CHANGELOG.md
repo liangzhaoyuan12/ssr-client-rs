@@ -37,6 +37,12 @@ First release: a byte-compatible Rust port of the ssr-n client.
   per-packet UDP crypto.
 - Local SOCKS5 server (`SsrClient`) plus `examples/socks5.rs`.
 - ssr-n JSON config loader (`config_from_json`).
+- Strongly typed config: `SsrClientConfig::method/protocol/obfs` are the
+  `CipherType`/`ProtocolType`/`ObfsType` enums (struct-literal friendly with
+  `..Default::default()`); JSON name strings are parsed once at the config
+  boundary via `from_name`, so an unknown name fails at load instead of at
+  connect time. Build configs as struct literals — `SsrClientConfig::new()`
+  with positional arguments was removed.
 
 ### Known limitations
 

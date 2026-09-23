@@ -22,7 +22,6 @@ use tokio::sync::Notify;
 use crate::config::SsrClientConfig;
 use crate::crypto::aead::AeadCipher;
 use crate::crypto::cipher_env::CipherEnv;
-use crate::crypto::types::CipherType;
 use crate::error::{SsrError, SsrResult};
 use crate::protocol::Protocol;
 use crate::socks5::{build_udp_datagram, parse_udp_datagram, TargetAddress};
@@ -90,8 +89,8 @@ impl UdpRelay {
             .next()
             .ok_or_else(|| SsrError::Connection(format!("no address for {}", config.server)))?;
 
-        let env = CipherEnv::new(&config.password, &config.method)?;
-        let method = CipherType::from_name(&config.method)?;
+        let env = CipherEnv::with_method(&config.password, config.method)?;
+        let method = config.method;
         let is_aead = AeadCipher::is_aead(method);
         let protocol = super::create_protocol(&config, &env, is_aead)?;
 
