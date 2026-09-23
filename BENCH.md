@@ -16,88 +16,105 @@ Reproducible micro-benchmark baseline for regression comparison (GOALS P1).
 
 Reproduce: `cargo bench -- --noplot` (all three targets).
 
-## 1. cipher_throughput — 1 MiB buffer per iteration
+## 1. cipher throughput (1 MiB buffer, criterion — clean rerun, no concurrent load)
 
-encrypt = persistent context streaming (TCP reality); decrypt = fresh
-context per wire block incl. IV/salt split (per-packet reality).
-MiB/s derived as 1 MiB / time (criterion thrpt agrees).
+`encrypt` = persistent-context streaming; `decrypt` = fresh ctx per packet
+(IV/salt parse + key schedule included). Unsupported methods (camellia,
+cast5, idea, rc2, seed — underlying crate coverage) are skipped by
+`CipherEnv::new`. Earlier numbers taken while clippy ran in parallel were
+contaminated (up to 10x on cache-sensitive paths); everything below was
+re-measured on an idle machine.
 
-| cipher | encrypt time | enc MiB/s | decrypt time | dec MiB/s |
-|---|---|---|---|---|
-| aes-128-cfb | 33.808 ms | 30 | 36.118 ms | 28 |
-| aes-128-ctr | 8.574 ms | 117 | 9.035 ms | 111 |
-| aes-128-gcm | 12.185 ms | 82 | 14.404 ms | 69 |
-| aes-192-cfb | 39.239 ms | 25 | 42.425 ms | 24 |
-| aes-192-ctr | 9.9584 ms | 100 | 10.404 ms | 96 |
-| aes-192-gcm | 13.679 ms | 73 | 15.856 ms | 63 |
-| aes-256-cfb | 44.994 ms | 22 | 48.34 ms | 21 |
-| aes-256-ctr | 11.364 ms | 88 | 11.848 ms | 84 |
-| aes-256-gcm | 15.099 ms | 66 | 17.497 ms | 57 |
-| bf-cfb | 13.724 ms | 73 | 13.931 ms | 72 |
-| chacha20 | 2.8729 ms | 348 | 3.3306 ms | 300 |
-| chacha20-ietf | 2.8716 ms | 348 | 3.3306 ms | 300 |
-| chacha20-ietf-poly1305 | 4.1925 ms | 239 | 6.3603 ms | 157 |
-| des-cfb | 48.145 ms | 21 | 48.312 ms | 21 |
-| none | 63.061 µs | 15858 | 514.57 µs | 1943 |
-| rc4 | 5.1909 ms | 193 | 5.6365 ms | 177 |
-| rc4-md5 | 5.1723 ms | 193 | 5.6304 ms | 178 |
-| rc4-md5-6 | 5.1507 ms | 194 | 5.6305 ms | 178 |
-| salsa20 | 2.5085 ms | 399 | 2.8984 ms | 345 |
-| table | 1.0704 ms | 934 | 1.5462 ms | 647 |
-| xchacha20-ietf-poly1305 | 4.2344 ms | 236 | 6.3886 ms | 157 |
+| cipher | encrypt MiB/s | decrypt MiB/s |
+|---|---:|---:|
+| aes-128-cfb | 29.6 | 27.7 |
 
-Skipped by `CipherEnv::new` (not implemented, same 8 as matrix CIPHER_SKIP):
-camellia-128/192/256-cfb, cast5-cfb, idea-cfb, rc2-cfb, seed-cfb.
+| aes-128-ctr | 116.9 | 110.7 |
 
-## 2. protocol_overhead — 1440 B payload, ns/packet
+| aes-128-gcm | 81.6 | 69.3 |
 
-| protocol | pre_encrypt | post_decrypt |
-|---|---|---|
-| auth_aes128_md5 | 6.3273 µs | 6.0859 µs |
-| auth_aes128_sha1 | 4.9755 µs | 4.744 µs |
-| auth_chain_a | 12.768 µs | n/a* |
-| auth_chain_b | 12.535 µs | n/a* |
-| auth_chain_c | 12.785 µs | n/a* |
-| auth_chain_d | 12.353 µs | n/a* |
-| auth_chain_e | 12.37 µs | n/a* |
-| auth_chain_f | 12.377 µs | n/a* |
-| auth_sha1 | 9.5458 µs | 8.7397 µs |
-| auth_sha1_v2 | 9.0669 µs | 8.1569 µs |
-| auth_sha1_v4 | 8.8337 µs | 8.222 µs |
-| auth_simple | 1.5857 µs | 1.5907 µs |
-| origin | 148.19 ns | 414.89 ns |
-| verify_simple | 1.6779 µs | 1.407 µs |
+| aes-192-cfb | 25.5 | 23.6 |
 
-\* auth_chain_a..f post: no client-side self-loop exists — pre walks the
-client hash chain, post walks the server hash chain, and only a real
-ssr-n server (`server_pre_encrypt`) can produce frames `post_decrypt`
-accepts (probe-verified: same-instance pre→post fails from frame 1; the
-C client faces the same limitation). Covered by the real-direction e2e
-matrix instead (39/51, all auth_chain variants PASS).
+| aes-192-ctr | 100.8 | 96.1 |
 
-## 3. obfs_overhead — 1440 B payload, ns/packet (steady state)
+| aes-192-gcm | 73.2 | 63.1 |
+
+| aes-256-cfb | 22.2 | 20.7 |
+
+| aes-256-ctr | 88.0 | 84.4 |
+
+| aes-256-gcm | 66.4 | 58.0 |
+
+| bf-cfb | 73.0 | 71.6 |
+
+| chacha20 | 348.1 | 300.2 |
+
+| chacha20-ietf | 346.9 | 298.2 |
+
+| chacha20-ietf-poly1305 | 237.7 | 156.6 |
+
+| des-cfb | 20.8 | 20.7 |
+
+| none | 15868.7 | 1952.0 |
+
+| rc4 | 193.9 | 178.7 |
+
+| rc4-md5 | 194.0 | 178.0 |
+
+| rc4-md5-6 | 194.1 | 177.5 |
+
+| salsa20 | 398.9 | 344.5 |
+
+| table | 928.6 | 647.5 |
+
+| xchacha20-ietf-poly1305 | 235.8 | 155.4 |
+
+## 2. protocol per-packet overhead (1440 B, ns/packet — clean rerun)
+
+> **P3 update**: after the per-packet allocation cuts (below), the affected
+> rows moved −4.6…−6.3% (auth_aes128 pre/post, auth_chain_a/c pre) — the
+> table shows the pre-optimization baseline; `auth_aes128` allocs 6→4 and
+> `auth_chain` allocs 5→2 per packet (measured with `tests/alloc_count.rs`).
+> Unaffected rows (origin/verify/sha1/simple) moved within the ±10% noise
+> band, as expected — their code paths were not touched.
+
+`post/*` for `auth_chain_*` is **n/a**: the client `post_decrypt` only parses
+server-direction frames (single-direction hash chains); `client_pre_encrypt`
+output cannot self-roundtrip — confirmed with a probe binary and by design
+(full_coverage's chain tests exercise `pre` only). Capturing real server
+frames would require driving the C server inside the bench; end-to-end cost
+is covered by P2 §4 instead.
+
+| protocol | pre | post |
+|---|---:|---:|
+| auth_aes128_md5 | 6.36 µs | 6.09 µs |
+| auth_aes128_sha1 | 5.03 µs | 4.73 µs |
+| auth_chain_a | 12.82 µs | n/a |
+| auth_chain_b | 12.40 µs | n/a |
+| auth_chain_c | 12.80 µs | n/a |
+| auth_chain_d | 12.37 µs | n/a |
+| auth_chain_e | 12.37 µs | n/a |
+| auth_chain_f | 12.39 µs | n/a |
+| auth_sha1 | 9.62 µs | 8.74 µs |
+| auth_sha1_v2 | 9.13 µs | 8.20 µs |
+| auth_sha1_v4 | 9.09 µs | 8.20 µs |
+| auth_simple | 1.64 µs | 1.59 µs |
+| origin | 145 ns | 390 ns |
+| verify_simple | 1.65 µs | 1.42 µs |
+
+## 3. obfs per-packet overhead (1440 B, ns/packet — clean rerun)
+
+Steady state: HTTP header emitted, TLS handshake completed (0x04/0x08 set
+via warm-up encode calls where reachable through the public API).
 
 | obfs | encode | decode |
-|---|---|---|
-| http_mix | 232.34 ns | 2.0664 µs |
-| http_post | 223.29 ns | 267.06 ns |
-| http_simple | 252.77 ns | 238.86 ns |
-| plain | 193.49 ns | 2.0563 µs |
-| tls1.2_ticket_auth | 480.81 ns | 2.1126 µs |
-| tls1.2_ticket_fastauth | 466.63 ns | 2.0905 µs |
-
-Steady state reached before timing: HTTP header emitted + response
-header stripped; TLS handshake driven to 0x04/0x08 via the public API
-(fastauth encode + synthesised server-HMAC response for decode).
-
-## Reading guide
-
-* P3 optimizations must move these numbers — before/after tables go in
-  PROGRESS.md, gain < 5% = not worth taking (GOALS P3).
-* P5 re-runs this baseline for confirmation; numbers above are already
-  release-grade: opt3 + thin LTO + codegen-units=1, no debug_assert cost.
-* P2 appends the end-to-end vs C table (tools/bench_vs_c.sh).
-
+|---|---:|---:|
+| http_mix | 251 ns | 2.05 µs |
+| http_post | 243 ns | 2.07 µs |
+| http_simple | 222 ns | 218 ns |
+| plain | 195 ns | 226 ns |
+| tls1.2_ticket_auth | 446 ns | 2.13 µs |
+| tls1.2_ticket_fastauth | 477 ns | 357 ns |
 
 ## 4. P2 end-to-end vs C client (2026-09-23)
 

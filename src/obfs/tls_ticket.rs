@@ -404,7 +404,17 @@ impl Obfs for Tls12TicketAuthObfs {
             }
         }
 
-        // Validate HMAC over accumulated records
+        // Validate HMAC over accumulated records.
+        // Defensive: a response whose first byte is neither 0x14 nor 0x16
+        // leaves header_length at 0, and `header_length - 10` would
+        // underflow-panic on this malformed/truncated data (C has the same
+        // size_t underflow at tls1.2_ticket.c:446 where it feeds an
+        // enormous length into buffer_create_from). Q4's macro grep cannot
+        // see arithmetic panics; fall through to the validation-failed exit
+        // instead — same outcome as a failed HMAC below, no crash.
+        if header_length < 10 {
+            return Ok((Vec::new(), false));
+        }
         let hash = hmac_sha1(&hmac_key, &iter[..header_length - 10]);
         if hash[..10] == iter[header_length - 10..header_length] {
             self.handshake_status |= 0x08;

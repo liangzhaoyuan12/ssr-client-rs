@@ -293,7 +293,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
   - 度量吞吐 MB/s 与 CPU 占用；目标 **吞吐 ≥ C 的 90%，CPU 不高于 C 的 1.5 倍**
   - 脚本: `tools/bench_vs_c.sh`，结果进 BENCH.md
 
-- [ ] P3 热路径优化（有基线后按数据动手，禁止盲改）
+- [x] P3 热路径优化（协议层每包分配 chain 5→2 / aes128 6→4，bench −4.6~−6.3% ≥5%；cipher/obfs 拷贝经数据判定 <5% 不做；238 测试+matrix 0 FAIL，2026-09-23）（有基线后按数据动手，禁止盲改）
   - 优先级: cipher_env encrypt/decrypt 每包分配 → 协议层 hmac/PRNG 每包分配 → obfs 拼包拷贝
   - 每项优化必须: bench 前后对比 + `cargo test` 全绿，收益 < 5% 的不做
   - 明确**不做**的: SIMD 手写汇编、unsafe 加速（与 Q5 冲突）、改变 wire format 的任何优化

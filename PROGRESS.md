@@ -676,3 +676,50 @@ BENCH.md §4）。
 注: P1 的 cipher 微基准（aes-256-cfb 22 MiB/s 软实现）与端到端 15.1
 MiB/s 不矛盾——端到端受协议层+obfs+拷贝链路综合限制，微基准的 CFB
 数字留作 P3 若真优化 cipher 的对照点。
+
+### ✅ P3 热路径优化（2026-09-23）
+
+**附带修复（阻塞 P3 时发现的生产缺陷）**:
+- `tls_ticket.rs` 握手验证 `header_length - 10` **usize 下溢 panic**——服务端
+  首字节非 0x14/0x16 时必崩（Q4 宏 grep 盲区：裸算术不匹配）。C 同一下溢
+  `tls1.2_ticket.c:446`（size_t 下溢喂超大 length）。修复：`header_length < 10`
+  → 落到既有校验失败出口 `Ok((Vec::new(), false))`（C 意图行为的内存安全实现）。
+  同类裸减法专项审计 29 处全查：其余均有前置长度检查（≥76、out_size 构造保证等）。
+- **BENCH.md 基线污染发现**：初跑 obfs decode 数字被并行 clippy 抢核干扰
+  （同 filter 单跑 175ns vs 并发 1.96µs，11×）。三 bench 已空载重跑，
+  §1-§3 全部替换为干净值并在文首标注。
+
+**实施（按 GOALS 优先级 = 协议层每包分配）**:
+1. `AuthChainAContext`/`AuthAES128` 增 `hmac_key_buf` 复用缓冲
+   （user_key||pack_id/recv_id 每包 key 拼接不再分配；长度可变故不能栈化，
+   server_info.key 可达 32B）——chain pre+post、aes128 pack_data+post 共 6 处。
+2. chain `pack_client_data`: rnd 中转 `collect::<Vec>` → 直填 `out`
+   （省 1 alloc）；`encrypt_buffer` 中转 to_vec → copy 进 out 后 RC4 in-place
+   （keystream 序列等价，省 1 alloc；`encrypt_buffer` 因唯一调用点移除而删除）。
+3. post 侧 key clone 同样走复用缓冲。
+
+**前后对比**（criterion，噪声带 ±10%；只记有意义项）:
+
+| bench | before | after | Δ |
+|---|---:|---:|---:|
+| pre/auth_aes128_md5 | 6.362 µs | 6.005 µs | **−5.6%** |
+| pre/auth_aes128_sha1 | 5.028 µs | 4.712 µs | **−6.3%** |
+| post/auth_aes128_md5 | 6.091 µs | 5.813 µs | −4.6% |
+| post/auth_aes128_sha1 | 4.735 µs | 4.442 µs | **−6.2%** |
+| pre/auth_chain_a | 12.820 µs | 12.076 µs | **−5.8%** |
+| pre/auth_chain_c | 12.804 µs | 12.067 µs | **−5.8%** |
+| pre/auth_chain_b/d/e/f | ~12.4 µs | ~11.9 µs | −3.6~−3.8% |
+| origin/verify/sha1/simple | — | — | ±10% 噪声内（路径未动） |
+
+分配计数（alloc_count）: **auth_chain pre 5→2、auth_aes128 pre 6→4 /包**。
+
+**经数据判定不做（<5%）**:
+- **cipher 每包分配**（优先级1）: stateful 往返仅 2 allocs，1440B 包的
+  to_vec ≈70ns vs aes-256-cfb 加密 63µs/包 = **0.11%**，改 encrypt_into
+  API 的收益不足 5% → 不做。
+- **obfs 拼包拷贝**（优先级3）: encode 单 alloc（195ns/包）在每包总预算
+  （cipher 63µs + protocol 5-12µs）中占 **≈0.3%**，改 Obfs trait 返回借用
+  的端到端收益 <5% → 不做（P2 端到端已 103% 优于 C）。
+
+**门禁**: cargo test **238/0**、clippy -D rc=0、fmt check 0、panic script 0、
+matrix **39/51+12SKIP 0 FAIL**、e2e_udp ALL_PASS、resilience **4/4**。

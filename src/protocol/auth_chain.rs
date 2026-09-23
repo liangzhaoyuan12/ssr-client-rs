@@ -280,6 +280,9 @@ struct AuthChainAContext {
     recv_id: u32,
     pack_id: u32,
     user_key: Vec<u8>,
+    /// P3: scratch buffer for the per-packet HMAC key (`user_key ||
+    /// pack_id`/`recv_id`) — avoids one heap allocation per packet.
+    hmac_key_buf: Vec<u8>,
     uid: [u8; 4],
     last_data_len: usize,
     last_client_hash: [u8; 16],
@@ -320,6 +323,7 @@ impl AuthChainA {
             recv_id: 1,
             pack_id: 1,
             user_key: Vec::new(),
+            hmac_key_buf: Vec::with_capacity(64),
             uid: [0; 4],
             last_data_len: 0,
             last_client_hash: [0; 16],
@@ -482,17 +486,6 @@ impl AuthChainA {
         Ok(())
     }
 
-    fn encrypt_buffer(&mut self, data: &[u8]) -> Vec<u8> {
-        if data.is_empty() {
-            return Vec::new();
-        }
-        let mut output = data.to_vec();
-        if let Some(ref mut cipher) = self.local.encrypt_ctx {
-            cipher.apply_keystream(&mut output);
-        }
-        output
-    }
-
     fn decrypt_buffer(&mut self, data: &[u8]) -> Vec<u8> {
         if data.is_empty() {
             return Vec::new();
@@ -514,26 +507,35 @@ impl AuthChainA {
         out[0] = (datalen ^ self.local.last_client_hash[14] as u16) as u8;
         out[1] = ((datalen >> 8) ^ self.local.last_client_hash[15] as u16) as u8;
 
-        // Random padding + encrypted data
-        let rnd_data: Vec<u8> = (0..rand_len).map(|_| rand::random::<u8>()).collect();
+        // Random padding filled straight into `out` (was: collect a
+        // temporary Vec and copy it back — one alloc + per-byte RNG per
+        // packet); the payload then overwrites its middle in place.
+        use rand::RngCore;
+        rand::thread_rng().fill_bytes(&mut out[2..2 + rand_len]);
 
         if !data.is_empty() {
             let start_pos = Self::get_rand_start_pos(rand_len, &mut self.local.random_client);
-            let encrypted = self.encrypt_buffer(data);
-            out[2..2 + start_pos].copy_from_slice(&rnd_data[..start_pos]);
-            out[2 + start_pos..2 + start_pos + data.len()].copy_from_slice(&encrypted);
-            out[2 + start_pos + data.len()..2 + start_pos + data.len() + rand_len - start_pos]
-                .copy_from_slice(&rnd_data[start_pos..]);
-        } else {
-            out[2..2 + rand_len].copy_from_slice(&rnd_data);
+            let payload = &mut out[2 + start_pos..2 + start_pos + data.len()];
+            payload.copy_from_slice(data);
+            // RC4 in place over the payload slice — keystream order is
+            // identical to `encrypt_buffer(data)` then copy, without the
+            // intermediate Vec.
+            if let Some(ref mut cipher) = self.local.encrypt_ctx {
+                cipher.apply_keystream(payload);
+            }
         }
 
-        // HMAC-MD5
-        let mut key = self.local.user_key.clone();
-        key.extend_from_slice(&self.local.pack_id.to_le_bytes());
+        // HMAC-MD5 (key reused from the struct scratch buffer)
+        self.local.hmac_key_buf.clear();
+        self.local
+            .hmac_key_buf
+            .extend_from_slice(&self.local.user_key);
+        self.local
+            .hmac_key_buf
+            .extend_from_slice(&self.local.pack_id.to_le_bytes());
         self.local.pack_id += 1;
 
-        let hash = hmac_md5(&key, &out[..out_size - 2]);
+        let hash = hmac_md5(&self.local.hmac_key_buf, &out[..out_size - 2]);
         out[out_size - 2..].copy_from_slice(&hash[..2]);
 
         self.local.last_client_hash = hash;
@@ -721,10 +723,16 @@ impl AuthChainA {
                 break;
             }
 
-            // HMAC key = user_key + recv_id (LE u32), recv_id updated per packet
-            let mut key = self.local.user_key.clone();
-            key.extend_from_slice(&self.local.recv_id.to_le_bytes());
-            let hash = hmac_md5(&key, &self.local.recv_buffer[..len - 2]);
+            // HMAC key = user_key + recv_id (LE u32), recv_id updated per
+            // packet; built in the reused scratch buffer (no per-packet alloc).
+            self.local.hmac_key_buf.clear();
+            self.local
+                .hmac_key_buf
+                .extend_from_slice(&self.local.user_key);
+            self.local
+                .hmac_key_buf
+                .extend_from_slice(&self.local.recv_id.to_le_bytes());
+            let hash = hmac_md5(&self.local.hmac_key_buf, &self.local.recv_buffer[..len - 2]);
             if hash[..2] != self.local.recv_buffer[len - 2..len] {
                 ssr_debug!(
                     "[acapostd] HMAC mismatch: data_len={} rand_len={} recv_id={} need={} have={}",

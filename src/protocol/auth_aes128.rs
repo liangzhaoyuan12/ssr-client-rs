@@ -10,6 +10,9 @@ const PACK_UNIT_SIZE: usize = 2000;
 pub struct AuthAES128 {
     has_sent_header: bool,
     recv_buffer: Vec<u8>,
+    /// P3: scratch buffer for the per-packet HMAC key (`user_key ||
+    /// pack_id`/`recv_id`) — avoids one heap allocation per packet.
+    hmac_key_buf: Vec<u8>,
     global: GlobalData,
     server_info: ServerInfo,
     user_key: Vec<u8>,
@@ -55,6 +58,7 @@ impl AuthAES128 {
             global: GlobalData::new(),
             server_info,
             user_key: Vec::new(),
+            hmac_key_buf: Vec::with_capacity(64),
             uid: [0; 4],
             pack_id: 1,
             recv_id: 1,
@@ -81,6 +85,7 @@ impl AuthAES128 {
             global: GlobalData::new(),
             server_info,
             user_key: Vec::new(),
+            hmac_key_buf: Vec::with_capacity(64),
             uid: [0; 4],
             pack_id: 1,
             recv_id: 1,
@@ -152,11 +157,12 @@ impl AuthAES128 {
         out[0] = out_size as u8;
         out[1] = (out_size >> 8) as u8;
 
-        // HMAC of first 2 bytes
-        let mut key = Vec::new();
-        key.extend_from_slice(&self.user_key);
-        key.extend_from_slice(&self.pack_id.to_le_bytes());
-        let hash = (self.hmac_fn)(&key, &out[0..2]);
+        // HMAC of first 2 bytes (key built in the reused scratch buffer)
+        self.hmac_key_buf.clear();
+        self.hmac_key_buf.extend_from_slice(&self.user_key);
+        self.hmac_key_buf
+            .extend_from_slice(&self.pack_id.to_le_bytes());
+        let hash = (self.hmac_fn)(&self.hmac_key_buf, &out[0..2]);
         out[2] = hash[0];
         out[3] = hash[1];
 
@@ -179,8 +185,8 @@ impl AuthAES128 {
         let data_start = 4 + rand_len;
         out[data_start..data_start + data.len()].copy_from_slice(data);
 
-        // HMAC of everything except last 4 bytes
-        let hash = (self.hmac_fn)(&key, &out[..out_size - 4]);
+        // HMAC of everything except last 4 bytes (same scratch key)
+        let hash = (self.hmac_fn)(&self.hmac_key_buf, &out[..out_size - 4]);
         out[out_size - 4..].copy_from_slice(&hash[..4]);
 
         out
@@ -427,12 +433,13 @@ impl Protocol for AuthAES128 {
         let mut output = Vec::new();
 
         while self.recv_buffer.len() > 4 {
-            // Verify first HMAC
-            let mut key = Vec::new();
-            key.extend_from_slice(&self.user_key);
-            key.extend_from_slice(&self.recv_id.to_le_bytes());
+            // Verify first HMAC (key built in the reused scratch buffer)
+            self.hmac_key_buf.clear();
+            self.hmac_key_buf.extend_from_slice(&self.user_key);
+            self.hmac_key_buf
+                .extend_from_slice(&self.recv_id.to_le_bytes());
 
-            let hash = (self.hmac_fn)(&key, &self.recv_buffer[..2]);
+            let hash = (self.hmac_fn)(&self.hmac_key_buf, &self.recv_buffer[..2]);
             if hash[0] != self.recv_buffer[2] || hash[1] != self.recv_buffer[3] {
                 self.recv_buffer.clear();
                 return Err(crate::error::SsrError::Protocol(
@@ -454,8 +461,8 @@ impl Protocol for AuthAES128 {
                 break;
             }
 
-            // Verify trailing HMAC
-            let hash = (self.hmac_fn)(&key, &self.recv_buffer[..length - 4]);
+            // Verify trailing HMAC (same scratch key)
+            let hash = (self.hmac_fn)(&self.hmac_key_buf, &self.recv_buffer[..length - 4]);
             if hash[..4] != self.recv_buffer[length - 4..length] {
                 self.recv_buffer.clear();
                 return Err(crate::error::SsrError::Protocol(
