@@ -765,3 +765,28 @@ script/matrix 39/51 0 FAIL 基线未动；进程已清理。
 - **文档注明**（GOALS 原文）: BENCH.md §1 写入
   下游可用 `RUSTFLAGS="-C target-cpu=native"` 自行榨取、库本身不绑 CPU 特性。
 - 门禁: build 0/0、clippy -D rc=0、fmt 0、panic script 0、cargo test **238/0**。
+
+### ✅ M1 CI 工作流 + M2 README 更新（2026-09-23）
+
+**M1**: `.github/workflows/ci.yml`——四门禁 job（fmt / clippy -D /
+test / release build，rust-cache，push+PR 触发）+ 可选 e2e job
+（`workflow_dispatch` + `[self-hosted, linux]`，需 /opt/ssr 服务端）。
+本地逐条跑同命令全绿: fmt=0、clippy=0、test 238/0、release warning 0；
+yml 经 PyYAML 解析通过。repository=cnb.cool（M10 push 目标）。
+
+**M2**: README 全面重写，逐项对照 GOALS 清单:
+- 快速开始: 库依赖写法 + JSON 加载（`config_json::config_from_json`，
+  **非根导出**，与 bin 同路径）+ `SsrClientConfig::new` 两种写法 +
+  `cargo run --example socks5 hk.json` 指引
+- **API 示例经编译验证**: 片段原样抽为 example 编译 0 error
+  （过程中抓到真错误 `SsrClient::new` 不返回 Result——修复）
+- 支持矩阵: cipher 21/28 实现（20 PASS + 8 SKIP 逐条注明原因：7 个
+  服务端自身不支持/des mbedTLS 不支持 + camellia×3 客户端未实现）、
+  protocol 14 全实现（10 PASS + 4 SKIP 服务端无 server_post_decrypt）、
+  obfs 6/6、UDP 3/3，链 tests/e2e/RESULTS.md
+- 配置字段表: 14 字段 JSON 键/类型/默认值/含义（client_settings 嵌套
+  覆盖说明）；错误处理与 panic-free 声明（链 check_panic_paths.sh）
+- MSRV 1.82（徽章+Building 段）、平台徽章×4、`readme`/`repository`/
+  `rust-version` 字段核对存在
+- **License 修正: README 原写 MIT——错**（Q10 已定上游 GPLv3 or later）→ 改
+  GPL-3.0-or-later + 链 LICENSE/CHANGELOG/BENCH.md

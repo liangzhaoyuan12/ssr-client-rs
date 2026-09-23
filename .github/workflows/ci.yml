@@ -1,0 +1,87 @@
+name: CI
+
+# Four-gate CI (GOALS M1): fmt -> clippy -> test -> release build.
+# The optional e2e job needs a local ssr-server (/opt/ssr) and therefore a
+# self-hosted runner; it only runs when the workflow is triggered manually.
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy (-D warnings)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
+      - run: cargo clippy --all-targets -- -D warnings
+
+  test:
+    name: cargo test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+      - run: cargo test
+
+  release:
+    name: release build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+      # G1: zero warnings on the release profile too ([lints.rust] warnings=deny
+      # already turns any rustc warning into a hard error).
+      - run: cargo build --release
+
+  # Optional e2e matrix (needs /opt/ssr/ssr-server + a browser-free loopback
+  # origin). Runs only on manual dispatch on a self-hosted runner that has the
+  # C server installed, so the default push/PR pipeline stays green anywhere.
+  e2e:
+    name: e2e matrix (self-hosted, manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, linux]
+    needs: [fmt, clippy, test, release]
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build --release
+      - run: python3 tools/matrix_test.py
+      - run: bash tools/e2e_udp.sh --all

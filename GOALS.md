@@ -312,11 +312,11 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
 
 **任务**:
 
-- [ ] M1 CI 工作流
+- [x] M1 CI 工作流（.github/workflows/ci.yml 四门禁 + e2e workflow_dispatch/self-hosted；本地逐条跑同命令全绿、yml 解析过，2026-09-23）
   - `.github/workflows/ci.yml`: fmt check → clippy -D warnings → cargo test → release build →（可选）e2e（需服务端，标记 `workflow_dispatch` 或 self-hosted）
   - 本地先逐条跑同样命令，保证 CI 不会红
 
-- [ ] M2 README 更新
+- [x] M2 README 更新（快速开始/API 示例（编译验证）/支持矩阵→RESULTS.md/14 字段表/MSRV/徽章×4/License 修正 MIT→GPL-3.0-or-later/链 BENCH+CHANGELOG，2026-09-23）
   - 现状核对: 快速开始、API 示例（指向 examples/）、支持矩阵（cipher/protocol/obfs/UDP）、配置字段说明、MSRV、徽章
   - 已测试组合表链到 `tests/e2e/RESULTS.md`
 
