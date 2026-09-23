@@ -2,8 +2,6 @@
 pub mod adler32;
 /// Base64 encode/decode helpers (standard alphabet, SSR URL parameters).
 pub mod base64;
-/// Growable byte buffer built on `bytes::BytesMut` for SSR framing.
-pub mod buffer;
 /// CRC-32 checksum (IEEE polynomial) helpers; mirrors `ssr-n/src/obfs/crc32.c`.
 pub mod crc32;
 /// Hash primitives shared by protocols: MD5, HMAC-MD5, HMAC-SHA1.

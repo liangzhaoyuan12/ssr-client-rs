@@ -324,7 +324,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
   - `CHANGELOG.md`: 0.1.0 首发条目（功能范围、已知限制: cast5/idea/rc2/seed 未实现、AEAD hk 组合待复核）
   - `LICENSE` 文件与 Cargo.toml `license` 字段一致
 
-- [ ] M4 API 冻结复核
+- [x] M4 API 冻结复核（人工过 pub 清单；private_interfaces 编译器证明 0；删死 API SsrBuffer+utils::buffer+bytes 直接依赖；ObfsRelay/Context/rc4_once 私有确认；2026-09-23）
   - `cargo public-api`（或人工过一遍 `pub` 清单）确认无私有类型泄漏、无无意义 pub
   - 内部类型（relay/obfs 细节）尽量 `pub(crate)`；确认 `Box<dyn Protocol>` 等 trait 边界合理
 

@@ -163,7 +163,7 @@ src/
 ├── socks5/             # SOCKS5 protocol parser
 ├── relay/              # TCP relay
 ├── local/              # Local proxy server + UDP relay
-└── utils/              # hash, base64, crc32, adler32, sockaddr, buffer
+└── utils/              # hash, base64, crc32, adler32, sockaddr
 benches/                # criterion: cipher throughput, protocol/obfs overhead
 examples/socks5.rs      # minimal runnable SOCKS5 proxy example
 tools/                  # e2e matrix, soak, fd probes, benchmarks vs the C client

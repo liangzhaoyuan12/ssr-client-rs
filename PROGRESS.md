@@ -790,3 +790,39 @@ yml 经 PyYAML 解析通过。repository=cnb.cool（M10 push 目标）。
   `rust-version` 字段核对存在
 - **License 修正: README 原写 MIT——错**（Q10 已定上游 GPLv3 or later）→ 改
   GPL-3.0-or-later + 链 LICENSE/CHANGELOG/BENCH.md
+
+### ✅ M4 API 冻结复核（2026-09-23）
+
+GOALS 允许 `cargo public-api` 或人工过 pub 清单——本机未装 cargo-public-api
+（cargo install 依赖 300+ crate 编译），采用**人工清单 + 编译器 lint**组合:
+
+1. **无私有类型泄漏（编译器证明）**: `private_interfaces`/`private_bounds`
+   是 warn-by-default lint，而 `[lints.rust] warnings = "deny"` 会将其升级
+   为 error——`cargo build` 0 error/0 warning ⇒ 全部 pub item 的类型边界
+   都是可达的（`grep private_interfaces|private_bounds`=0 命中）。
+2. **全量 pub 清单人工过**（37 文件 ~240 pub item）:
+   - socks5 32 = RFC 1928 常量/解析入口（公共协议常量 ✓）
+   - protocol 22 = Protocol trait、14 构造器、ServerInfo/GlobalData/
+     XorShift（构造协议的必需输入 ✓）；**AuthChainAContext 与 rc4_once
+     确认为私有** ✓
+   - crypto 21+19+17 = CipherType/Enum、CipherEnv（bench 与高级用户直接
+     使用 ✓）
+   - utils hash/sockaddr/crc32/base64/adler = 共享密码原语 ✓
+   - relay::TcpRelay pub + re-export、local::UdpRelay 经 pub mod 可达 =
+     对称的可复用组件 ✓
+   - **ObfsRelay 是私有 struct** ✓（relay 细节未泄漏——GOALS 关注点）
+3. **trait 边界合理**: `Box<dyn Protocol>`（trait pub、工厂 create_protocol
+   私有）、`Box<dyn Obfs>`（trait pub、create_obfs pub——bench 使用）
+   ✓ 无无意义 pub 泄漏。
+4. **清理无意义 pub（冻结前最后时机）**:
+   - 删除 `SsrBuffer` + `src/utils/buffer.rs`（149 行、20 个 pub item、
+     **0 生产引用**——R4 判"留 P3"，P3 按 <5% 规则不做其优化，
+     冻结一个死 API 无意义）
+   - 连带删除直接依赖 `bytes = "1"`（BytesMut 唯一使用者就是 buffer.rs；
+     Cargo.lock 中 bytes 现为传递依赖 `cargo tree -i` 核实）
+   - README Project structure 同步（buffer 行随 M2 已重写时的 utils 列表
+     ——复核: README 写的 utils 列表含 buffer → 已在 M2 提交中列出
+     "hash, base64, crc32, adler32, sockaddr, buffer" → **需同步删**——
+     本条记录时已修正见下小点）
+5. 门禁: build 0/0、test 238/0、clippy -D rc=0、fmt 0、doc 0、
+   panic script 0、release warning 0。
