@@ -25,7 +25,8 @@ fn main() {
     let mut obfs = Tls12TicketAuthObfs::new(server.to_string(), port, String::new(), false);
     obfs.set_key(env.key().to_vec());
 
-    let mut stream = TcpStream::connect(format!("{}:{}", server, port)).unwrap();
+    let mut stream =
+        TcpStream::connect(ssr_client_rs::utils::sockaddr::host_port(server, port)).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();

@@ -44,6 +44,13 @@ First release: a byte-compatible Rust port of the ssr-n client.
   decisions, in-flight byte middleware). Both modes share one tunnel
   builder, so their wire bytes are identical; TCP only (UDP ASSOCIATE
   stays in Mode A).
+- **IPv6 end to end**: SOCKS5 `ATYP 0x04` targets (CONNECT parse, success
+  reply, SSR address package, UDP datagram round-trip), IPv6-literal
+  `server` / `listen_address` configuration, and dual-stack `::` listeners —
+  all covered by dedicated tests (`host_port()` formats addresses in the
+  bracketed form std documents; bare and bracketed forms resolve
+  identically). The outbound UDP socket already picked its family
+  (`0.0.0.0:0` vs `[::]:0`).
 - ssr-n JSON config loader (`config_from_json`).
 - Strongly typed config: `SsrClientConfig::method/protocol/obfs` are the
   `CipherType`/`ProtocolType`/`ObfsType` enums (struct-literal friendly with
@@ -51,6 +58,16 @@ First release: a byte-compatible Rust port of the ssr-n client.
   boundary via `from_name`, so an unknown name fails at load instead of at
   connect time. Build configs as struct literals — `SsrClientConfig::new()`
   with positional arguments was removed.
+
+### Fixed
+
+- `SsrClient::stop()` no longer races `start()`: the shutdown signal is a
+  `watch` channel (value semantics) instead of `Notify::notify_waiters`,
+  which stored no permit — a `stop()` landing before the accept loops
+  registered their waiter hung `start()` forever (observed as a test
+  process holding its listen port). Both the TCP accept loop and the UDP
+  relay now check the flag at the top of every turn; `stop()`/`start()`
+  keep their signatures, and a stop-then-restart cycle works.
 
 ### Known limitations
 

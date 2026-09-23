@@ -160,7 +160,7 @@ JSON keys are identical to the `SsrClientConfig` fields
 |---|---|---|---|
 | `server` | string | — | remote SSR server host/IP |
 | `server_port` | u16 | — | remote SSR server port |
-| `listen_address` | string | `127.0.0.1` | local SOCKS5 bind address |
+| `listen_address` | string | `127.0.0.1` | local SOCKS5 bind address (`::` = dual-stack IPv6) |
 | `listen_port` | u16 | `1080` | local SOCKS5 bind port |
 | `password` | string | — | cipher password |
 | `method` | `CipherType` | — | cipher name, e.g. `aes-256-cfb` (JSON holds the name; parsed via `from_name`) |

@@ -890,3 +890,47 @@ push 按用户指示（**不主动 push**）；远端 origin=https://cnb.cool/li
 - fmt 0、clippy -D rc=0、panic script 0、doc warnings 0、release 0 warning
 - README 两个 rust 片段（模式 A/B）分别编译 rc=0；CHANGELOG Added 记录
 - GOALS U1/U2 已勾选
+
+### ✅ Phase V: IPv6 支持核查 + stop() 竞态修复（2026-09-23）
+
+**起因**: 用户问"当前库是否支持 ipv6"。
+
+**核查结论（三层）**:
+1. **协议/数据面 —— 原生支持，有测试**: SOCKS5 CONNECT 解析 ATYP 0x04
+   （正/负向）、success reply IPv6 分支、`build_address_package` 0x04+16B、
+   UDP datagram IPv6 往返、`TargetAddr::IPv6`/`to_socket_addr`、UDP 出站
+   socket family 分支（0.0.0.0:0 / [::]:0）、UDP server 解析用 lookup_host
+   元组形式（v6 字面量直接 parse）。`open_session(TargetAddr::IPv6)` 全通。
+2. **配置字面量 —— 实测本机就可用，但格式不规范**: 独立 rustc 实验
+   （/tmp/v6probe）证明：`"::1:8388"->[::1]:8388`、`":::1080"-> [::]:1080`、
+   `"2001:db8::1:443" -> [2001:db8::1]:443`、`bind ":::0"` OK —— **std 按
+   最后一个冒号拆分，裸拼与括号形式解析结果完全相同**。所以原
+   `format!("{}:{}")` 并非"必然失败的 bug"（第一版 is_err 断言被实测打脸，
+   据此修正定性为规范化，不谎称修复）。
+3. **本次改动**: 新增 `utils::sockaddr::host_port()`（括号化、防重复括号），
+   规范化 6 处拼接：connect_to_ssr_server、start() TCP bind、UDP bind、
+   bin 显示（ssr_client）、access_google、SockAddr::resolve。测试 4 个：
+   格式矩阵、等价断言（bare==bracketed==ours 含 bind 形式）、
+   真连 [::1]（本机 std listener）、start() 绑 "::" 双栈 + ::1 连入。
+   **http_simple Host 头不动** —— C 端同为裸拼 "%s:%d"，wire 兼容优先。
+
+**V2 真 bug（新测试暴露）**: `test_ssr_client_start_ipv6_bind` 二次运行挂死
+→ 300s cell 超时留下**僵尸测试进程 pid=1212991 占着 19878**（ss -ltnp 实锤）。
+根因：`stop()` 用 `Notify::notify_waiters()`（不存 permit），若 stop 落在
+accept 循环注册 `notified()` 之前，通知永久丢失 → `start()` 的 handle.await
+永挂。TCP(95 行)与 UDP relay(126 行)双 waiter 同病。
+**修复**: shutdown 改 `Arc<watch::Sender<bool>>`（值语义，迟到订阅者必见
+最新值）——start() 先 send(false) 复位并 subscribe，循环顶
+`borrow_and_update()` 检查 + select changed 分支；UDP spawn/run 改收
+watch::Receiver 同模板；stop() = store(false) + send(true)。
+stop→start 重启周期可复用（复位在 subscribe 前）。
+外部 API（stop/is_running/start 签名）不变。
+
+**验证（全实测）**:
+- 两个旧失败测试修正为实验事实断言（等价，非 is_err）
+- start/stop 压力：10 连跑 + 5 连跑 + ipv6 过滤 6 个 —— **全 ok，
+  ss -ltn 0 残留 LISTEN**（修复前僵尸残留为证）
+- build 0/0、clippy -D rc=0、fmt 0、cargo test 全套、panic script 0、
+  doc 0、release 0 warning
+- 三路 e2e 复跑：matrix 39/51+12SKIP+0 FAIL、UDP ALL_PASS、管道 e2e ok
+- README listen_address 行注 :: 双栈；CHANGELOG Added(IPv6 段)+Fixed(stop 竞态)

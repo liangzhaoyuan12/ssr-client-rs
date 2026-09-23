@@ -17,7 +17,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::net::UdpSocket;
-use tokio::sync::Notify;
 
 use crate::config::SsrClientConfig;
 use crate::crypto::aead::AeadCipher;
@@ -78,7 +77,7 @@ impl UdpRelay {
     /// C replies to UDP ASSOCIATE with `uv_tcp_getsockname`, client.c:653) and
     /// resolve the SSR server address once (C resolves at listener startup).
     pub async fn bind(config: SsrClientConfig) -> SsrResult<Self> {
-        let listen = format!("{}:{}", config.listen_address, config.listen_port);
+        let listen = crate::utils::sockaddr::host_port(&config.listen_address, config.listen_port);
         let listener = UdpSocket::bind(&listen).await.map_err(|e| {
             SsrError::Connection(format!("Failed to bind UDP relay on {listen}: {e}"))
         })?;
@@ -104,27 +103,33 @@ impl UdpRelay {
         })
     }
 
-    /// Run the relay until `shutdown` is notified.
-    pub fn spawn(self, shutdown: Arc<Notify>) {
+    /// Run the relay until `shutdown` flips to `true` (a `watch` receiver:
+    /// value semantics — a stop() that already happened is still seen).
+    pub fn spawn(self, mut shutdown: tokio::sync::watch::Receiver<bool>) {
         tokio::spawn(async move {
-            if let Err(e) = self.run(shutdown).await {
+            if let Err(e) = self.run(&mut shutdown).await {
                 log::error!("[udp] relay stopped: {e}");
             }
             log::debug!("[udp] relay exited");
         });
     }
 
-    async fn run(self, shutdown: Arc<Notify>) -> SsrResult<()> {
+    async fn run(self, shutdown: &mut tokio::sync::watch::Receiver<bool>) -> SsrResult<()> {
         let mut buf = vec![0u8; 65535];
         loop {
+            if *shutdown.borrow_and_update() {
+                log::debug!("[udp] shutdown requested");
+                break;
+            }
             tokio::select! {
                 r = self.listener.recv_from(&mut buf) => {
                     let (n, from) = r.map_err(|e| SsrError::Connection(format!("udp recv: {e}")))?;
                     self.handle_request(&buf[..n], from).await;
                 }
-                _ = shutdown.notified() => {
-                    log::debug!("[udp] shutdown requested");
-                    break;
+                changed = shutdown.changed() => {
+                    if changed.is_err() {
+                        break; // SsrClient dropped
+                    }
                 }
             }
         }

@@ -43,8 +43,9 @@ async fn main() {
         None => SsrClientConfig::default_test(),
     };
 
-    let listen = format!("{}:{}", config.listen_address, config.listen_port);
-    let server = format!("{}:{}", config.server, config.server_port);
+    let listen =
+        ssr_client_rs::utils::sockaddr::host_port(&config.listen_address, config.listen_port);
+    let server = ssr_client_rs::utils::sockaddr::host_port(&config.server, config.server_port);
 
     let client = SsrClient::new(config);
     let client_ref = client.clone();

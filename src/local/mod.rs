@@ -16,7 +16,7 @@ use std::task::{Context, Poll};
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Notify;
+use tokio::sync::watch;
 
 use crate::config::SsrClientConfig;
 use crate::error::{SsrError, SsrResult};
@@ -30,7 +30,12 @@ use crate::socks5::{
 pub struct SsrClient {
     config: SsrClientConfig,
     running: Arc<AtomicBool>,
-    shutdown: Arc<Notify>,
+    /// `true` = stop requested. A `watch` (value semantics) rather than a
+    /// `Notify`: `notify_waiters` stores no permit, so a `stop()` landing in
+    /// the gap before a loop registers `notified()` hung `start()` forever
+    /// (observed as a zombie test holding its listen port). A late subscriber
+    /// always sees the latest value.
+    shutdown: Arc<watch::Sender<bool>>,
 }
 
 impl SsrClient {
@@ -39,7 +44,7 @@ impl SsrClient {
         Self {
             config,
             running: Arc::new(AtomicBool::new(false)),
-            shutdown: Arc::new(Notify::new()),
+            shutdown: Arc::new(watch::channel(false).0),
         }
     }
 
@@ -50,12 +55,18 @@ impl SsrClient {
     ///
     /// This method runs until `stop()` is called.
     pub async fn start(&self) -> SsrResult<()> {
-        let addr = format!("{}:{}", self.config.listen_address, self.config.listen_port);
+        let addr =
+            crate::utils::sockaddr::host_port(&self.config.listen_address, self.config.listen_port);
         let listener = TcpListener::bind(&addr).await.map_err(|e| {
             SsrError::Connection(format!("Failed to bind SOCKS5 server on {addr}: {e}"))
         })?;
 
         self.running.store(true, Ordering::SeqCst);
+        // Reset the stop flag for this run (a previous `stop()` sets it) and
+        // subscribe before anything can notify: after `subscribe()`, the flag
+        // read at the loop top can never be missed.
+        let _ = self.shutdown.send(false);
+        let mut shutdown_rx = self.shutdown.subscribe();
 
         log::info!("SOCKS5 server listening on {addr}");
 
@@ -63,7 +74,7 @@ impl SsrClient {
         // C creates the listener during startup; a bind failure aborts startup.
         if self.config.udp {
             let relay = crate::local::udp_relay::UdpRelay::bind(self.config.clone()).await?;
-            relay.spawn(self.shutdown.clone());
+            relay.spawn(self.shutdown.subscribe());
             log::info!(
                 "UDP relay listening on {}:{}",
                 self.config.listen_address,
@@ -72,6 +83,12 @@ impl SsrClient {
         }
 
         loop {
+            // Value check every turn: a stop() that already happened (or
+            // lands outside the select) is seen here instead of hanging.
+            if *shutdown_rx.borrow_and_update() {
+                log::info!("SOCKS5 server shutting down");
+                break;
+            }
             tokio::select! {
                 accept_result = listener.accept() => {
                     match accept_result {
@@ -89,7 +106,10 @@ impl SsrClient {
                         }
                     }
                 }
-                _ = self.shutdown.notified() => {
+                changed = shutdown_rx.changed() => {
+                    if changed.is_err() {
+                        break; // SsrClient dropped
+                    }
                     log::info!("SOCKS5 server shutting down");
                     break;
                 }
@@ -104,7 +124,7 @@ impl SsrClient {
     /// Stop the SOCKS5 proxy server.
     pub fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
-        self.shutdown.notify_waiters();
+        let _ = self.shutdown.send(true);
     }
 
     /// Check if the server is running.
@@ -998,7 +1018,7 @@ async fn perform_obfs_handshake(
     Ok(())
 }
 async fn connect_to_ssr_server(config: &SsrClientConfig) -> SsrResult<TcpStream> {
-    let addr = format!("{}:{}", config.server, config.server_port);
+    let addr = crate::utils::sockaddr::host_port(&config.server, config.server_port);
 
     let stream = tokio::time::timeout(
         std::time::Duration::from_secs(config.connect_timeout as u64),
@@ -1109,6 +1129,67 @@ mod tests {
         // Handle should complete without error
         let result = handle.await.unwrap();
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_connect_to_ipv6_literal_server() {
+        // IPv6 literal server addresses must connect (bracket formatting).
+        let Ok(listener) = std::net::TcpListener::bind("[::1]:0") else {
+            eprintln!("no IPv6 loopback on this host — skipping");
+            return;
+        };
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for s in listener.incoming() {
+                if s.is_err() {
+                    break;
+                }
+            }
+        });
+        let config = SsrClientConfig {
+            server: "::1".to_string(),
+            server_port: port,
+            connect_timeout: 2,
+            ..Default::default()
+        };
+        let stream = connect_to_ssr_server(&config)
+            .await
+            .expect("connect to [::1] literal must succeed");
+        assert!(stream.peer_addr().unwrap().is_ipv6());
+    }
+
+    #[tokio::test]
+    async fn test_ssr_client_start_ipv6_bind() {
+        // listen_address "::" must bind (dual-stack IPv6 wildcard).
+        if std::net::TcpListener::bind("[::]:0").is_err() {
+            eprintln!("no IPv6 on this host — skipping");
+            return;
+        }
+        let port = 19878u16;
+        let config = SsrClientConfig {
+            server: "127.0.0.1".to_string(),
+            server_port: 8388,
+            password: "password".to_string(),
+            method: CipherType::AES256CFB,
+            protocol: ProtocolType::Origin,
+            obfs: ObfsType::Plain,
+            listen_address: "::".to_string(),
+            listen_port: port,
+            ..Default::default()
+        };
+        let client = SsrClient::new(config);
+        let client_ref = client.clone();
+        let handle = tokio::spawn(async move { client.start().await });
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        // Accepting on the v6 wildcard must work from ::1.
+        assert!(
+            tokio::net::TcpStream::connect(("::1", port)).await.is_ok(),
+            "listener on [::]:{port} must accept an IPv6 connection"
+        );
+        client_ref.stop();
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let result = handle.await.unwrap();
+        assert!(result.is_ok(), "start() returned {result:?}");
     }
 
     #[tokio::test]

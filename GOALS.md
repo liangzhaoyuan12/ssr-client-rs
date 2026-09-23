@@ -363,6 +363,17 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
 
 ---
 
+## Phase V: IPv6 支持核查 + stop 竞态修复（2026-09-23）
+
+- [x] V1 IPv6 全景核查与收口
+  - 协议层原生支持确认（ATYP 0x04 解析/应答/addr_pkg/UDP 往返均有测试）；rustc 实验证明裸拼与括号形式解析**等价**（原代码 IPv6 字面量本就可用——如实记录，非修 bug）
+  - `host_port()` 规范化 6 处地址拼接为 std 括号形式；新增 IPv6 字面量连通、`::` 双栈监听、格式等价共 4 测试；http_simple Host 头保持与 C 裸拼逐字节一致（不动）
+- [x] V2 stop() 竞态修复（新测试暴露的真 bug）
+  - Notify::notify_waiters 无 permit → 错过注册窗口即永挂（僵尸测试进程持端口为证）；改 watch 值语义，TCP/UDP 双循环顶检查；start/stop 压力 15 连跑全过、0 LISTEN 残留
+  - 门禁全绿 + matrix 39/51 0 FAIL + UDP ALL_PASS + 管道 e2e 三路复跑
+
+---
+
 ## 测试记录模板
 
 每次测试后在 PROGRESS.md 中记录：
