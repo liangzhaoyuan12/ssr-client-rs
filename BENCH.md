@@ -97,3 +97,22 @@ header stripped; TLS handshake driven to 0x04/0x08 via the public API
 * P5 re-runs this baseline for confirmation; numbers above are already
   release-grade: opt3 + thin LTO + codegen-units=1, no debug_assert cost.
 * P2 appends the end-to-end vs C table (tools/bench_vs_c.sh).
+
+
+## 4. P2 end-to-end vs C client (2026-09-23)
+
+| field | value |
+|---|---|
+| config | aes-256-cfb / auth_aes128_sha1 / tls1.2_ticket_auth, loopback |
+| payload | 64 MiB random file x 3 runs, median |
+| server | /opt/ssr/ssr-server (d70342262c45) |
+| C client | /opt/ssr/ssr-client (988974dcdfa5) |
+| Rust client | /home/liangzhaoyuan12/work/rs/ssr-client-rs/target/release/ssr_client (ecd9b44095fa) |
+
+| client | throughput MiB/s | median wall s | CPU % |
+|---|---|---|---|
+| C | 14.6 | 4.385326 | 99.9 |
+| Rust | 15.1 | 4.248949 | 79.8 |
+
+**Result**: throughput rust/C = 103.4% (target >= 90%),
+CPU rust/C = 0.80x (target <= 1.5x) — throughput rust/C=103.42% (PASS, need >=90%)  cpu rust/C=0.80x (PASS, need <=1.5x)

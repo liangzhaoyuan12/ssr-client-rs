@@ -288,7 +288,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
   - `benches/obfs_overhead.rs`: 各 obfs encode/decode 每包 ns 开销
   - 结果表入库 `BENCH.md`（含日期、机器、频率），作为后续回归对照
 
-- [ ] P2 对标 C 客户端
+- [x] P2 对标 C 客户端（64MiB×3 回环：吞吐 15.1 vs 14.6 MiB/s = 103.4% ≥90%；CPU 79.8% vs 99.9% = 0.80× ≤1.5×；双 PASS，2026-09-23）
   - 同机同配置: 我方客户端 vs `/opt/ssr/ssr-client`，本地 ssr-server 回环传 64MB 文件
   - 度量吞吐 MB/s 与 CPU 占用；目标 **吞吐 ≥ C 的 90%，CPU 不高于 C 的 1.5 倍**
   - 脚本: `tools/bench_vs_c.sh`，结果进 BENCH.md

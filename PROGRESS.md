@@ -652,3 +652,27 @@ tcp: 298 ok / 0 fail    udp: 20 ok / 0 fail    panics: 0    → SOAK_PASS
 **另发现 CHANGELOG 已知限制漏报**：camellia-128/192/256-cfb 同样未实现
 （bench skip + matrix CIPHER_SKIP 8 项一致）——M3 时补正。
 门禁: fmt 0、clippy -D rc=0、cargo test 全绿、panic 脚本 rc=0、0 warning
+
+### ✅ P2 对标 C 客户端（2026-09-23）
+
+**新脚本 `tools/bench_vs_c.sh`**（同机同配置回环 64MiB×3 取中位；wall 用
+curl time_total，CPU 用 /proc/PID/stat utime+stime 差；结果自动追加
+BENCH.md §4）。
+
+配置: aes-256-cfb / auth_aes128_sha1 / tls1.2_ticket_auth（hk.json 同款
+实际组合）+ 本地 ssr-server（d70342262c45）+ 随机 64MiB HTTP 源。
+
+| client | throughput | median wall | CPU |
+|---|---|---|---|
+| C (/opt/ssr/ssr-client, 988974dcdfa5) | 14.6 MiB/s | 4.385 s | 99.9% |
+| **Rust** (release, ecd9b44095fa) | **15.1 MiB/s** | **4.249 s** | **79.8%** |
+
+**判定（GOALS P2 双目标）**:
+- 吞吐 rust/C = **103.4%** ≥ 90% ✅（反超 C 3.4%）
+- CPU rust/C = **0.80×** ≤ 1.5× ✅（比 C 省 20% CPU——C 打满一核，
+  Rust 未满；单流即饱和链路上 C CPU≈wall，Rust 更省）
+- 三轮方差极小（C 4.38/4.40/4.39、Rust 4.22/4.26/4.25）→ 中位可信
+
+注: P1 的 cipher 微基准（aes-256-cfb 22 MiB/s 软实现）与端到端 15.1
+MiB/s 不矛盾——端到端受协议层+obfs+拷贝链路综合限制，微基准的 CFB
+数字留作 P3 若真优化 cipher 的对照点。
