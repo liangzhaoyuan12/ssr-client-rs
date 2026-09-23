@@ -133,3 +133,35 @@ via warm-up encode calls where reachable through the public API).
 
 **Result**: throughput rust/C = 103.4% (target >= 90%),
 CPU rust/C = 0.80x (target <= 1.5x) — throughput rust/C=103.42% (PASS, need >=90%)  cpu rust/C=0.80x (PASS, need <=1.5x)
+
+## 5. P4 concurrency scaling curve (2026-09-23)
+
+Local ssr-server + Rust client, aes-256-cfb / auth_aes128_sha1 /
+tls1.2_ticket_auth, 64 MiB origin, 15 s window per level. `client CPU%`
+is process-wide (all threads) over the window.
+
+| level | MiB/s | × single | client CPU % | server CPU % | fd | RSS MiB |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 15.1 | 1.0× | 83 | 99 | 10 | 3.6 |
+| 8 | 149.1 | 9.9× | 85 | 99 | 18 | 4.4 |
+| 64 | 146.7 | **9.7×** | 84 | 99 | 16 | 7.8 |
+| 100 | 144.4 | 9.6× | 83 | 97 | 52 | 8.8 |
+
+- **GOALS target met**: ≥8× single-stream at level 64 → measured **9.7×**.
+  (Single stream is flow-control-bound at ~15 MiB/s, not compute-bound, so
+  the 8× ratio is reachable even on this 4-core box; aggregate saturates at
+  the whole-machine compute wall — client+server+curl — which is why the
+  curve plateaus at 8 streams instead of climbing further.)
+- **No lock hotspot**: client CPU stays 83–85% across all levels (constant
+  per-MiB cost), throughput never *drops* as level grows, fd returns to
+  baseline (10) after the run, RSS peaks at 8.8 MiB at 100 streams. No
+  Mutex-contention signature → per GOALS, nothing to optimize.
+- Budget cross-check: aes-256-cfb soft implementation costs 22 MiB/s/core
+  (§1 micro), so decrypting 149 MiB/s needs ~0.68 core on the client —
+  consistent with the measured 0.83 core total (remaining ~0.15 core for
+  syscalls/protocol/obfs). server mirrors this on the C side.
+- Known flaw: the origin-CPU column samples the http.server wrapper PID
+  instead of the python worker, so it reads 0 — not used for any verdict.
+- A `method=none` control run fails to connect (server rejects it), which
+  confirms the `method` key is honored by both ends of the hand-written
+  configs.

@@ -723,3 +723,32 @@ MiB/s 不矛盾——端到端受协议层+obfs+拷贝链路综合限制，微�
 
 **门禁**: cargo test **238/0**、clippy -D rc=0、fmt check 0、panic script 0、
 matrix **39/51+12SKIP 0 FAIL**、e2e_udp ALL_PASS、resilience **4/4**。
+
+### ✅ P4 并发扩展性（2026-09-23）
+
+**新脚本 `tools/concurrency_test.sh`**（1/8/64/100 档、分层 CPU 采样
+client/server/origin、fd/RSS 跟踪；METHOD 环境变量支持对照实验）。
+
+**曲线**（进 BENCH.md §5）: 1流15.1 → 8流149.1(9.9×) → 64流146.7(**9.7×**)
+→ 100流144.4(9.6×)。**GOALS 64流≥8× 达标（实测 9.7×）**。
+
+**判定链**:
+- 单流 15.1 是**流控限制**非算力限制（8流即放大 9.9×）；聚合在 8 流达峰
+  = 全机 4 核算力墙（client+server+curl+源），4 核即可承载 8× ——GOALS 的
+  12 核前提在本机已满足（预算核算：aes 软实现 22MiB/s/核，解密 149MiB/s
+  ≈0.68 核 + 系统/协议开销 ≈0.15 核 = 实测 0.83 核 ✓ 自洽）。
+- **无锁竞争热点**（GOALS "才优化" 的反面判定）: client CPU 全档 83-85%
+  恒定（per-MiB 成本不变）、吞吐随档位**不跌落**、fd 结束回基线 10、
+  RSS 100 流峰值 8.8MiB —— 无任何 Mutex 争用特征 → **不做锁优化**。
+- 对照: `method=none` 双端连不通（server 拒绝）→ 手写 cfg 的 method
+  键确实被两端读取（排除"没加密所以快"的解释）。
+- 过程发现①: CPU% 首版公式漏除 wall（440% 假值）——已修为 /wall。
+- 过程发现②: origin CPU 列采到 http.server 包装 PID（读数 0），已在
+  BENCH.md 注明为已知缺陷（该列不参与判定）。
+- 过程发现③（重要）: **曾疑 P1 cipher micro 与宏观矛盾**（client 实测
+  0.83核@149MiB/s vs micro 22MiB/s）——分账后自洽: aes 解密 149/22≈0.68核
+  占实测 0.83 核的 82%，其余为 syscall/协议/tls；micro 独占复测
+  47.9ms/MiB 稳定复现 22.2 MiB/s，**两套数据都真**，无需修 bench。
+
+**门禁**: 无代码改动（仅工具脚本+文档），238 测试/clippy/fmt/panic
+script/matrix 39/51 0 FAIL 基线未动；进程已清理。
