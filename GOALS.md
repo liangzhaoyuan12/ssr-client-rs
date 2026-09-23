@@ -257,7 +257,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
   - UDP: 建 100 个会话，等 `udp_timeout` 过期后会话表清空、fd 回落（验证 udp_relay 淘汰逻辑）
   - 纳入 T5/T6 断言
 
-- [ ] R3 负载内存增长
+- [x] R3 负载内存增长（600s/64KB soak SOAK_PASS×2：增长 592KB、斜率 1.0 KB/min、fd 恒定 11、0 panic，2026-09-23）
   - 10 分钟持续 64KB 分块传输，每 30s 采样 RSS；warmup 后线性增长斜率 ≈ 0（总增长 ≤ 10MB）
   - 若增长: 用 `heaptrack`（若可用）或二分法定位（优先怀疑: 会话表、buffer 累积、日志缓冲）
 
