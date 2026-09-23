@@ -320,7 +320,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
   - 现状核对: 快速开始、API 示例（指向 examples/）、支持矩阵（cipher/protocol/obfs/UDP）、配置字段说明、MSRV、徽章
   - 已测试组合表链到 `tests/e2e/RESULTS.md`
 
-- [ ] M3 CHANGELOG + LICENSE
+- [x] M3 CHANGELOG + LICENSE（0.1.0 条目含功能范围+已知限制（补 camellia×3/des 说明、21/28 精确化）；LICENSE=上游 GPLv3 与 license 字段一致，2026-09-23）
   - `CHANGELOG.md`: 0.1.0 首发条目（功能范围、已知限制: cast5/idea/rc2/seed 未实现、AEAD hk 组合待复核）
   - `LICENSE` 文件与 Cargo.toml `license` 字段一致
 

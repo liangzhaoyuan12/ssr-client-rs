@@ -24,10 +24,11 @@ First release: a byte-compatible Rust port of the ssr-n client.
 
 ### Added
 
-- **28 stream-cipher / AEAD methods**: AES-128/192/256 CFB & CTR, ChaCha20
-  (IETF + legacy), Salsa20, Blowfish-CFB, DES-CFB, RC4-MD5 / RC4-MD5-6,
-  Table, and the AEAD suite (aes-128/192/256-gcm, chacha20-ietf-poly1305 …),
-  verified byte-identical against the ssr-n server (e2e matrix).
+- **28 cipher method names parsed; 21 implemented**: AES-128/192/256 CFB &
+  CTR, ChaCha20 (IETF + legacy), Salsa20, Blowfish-CFB, DES-CFB,
+  RC4-MD5 / RC4-MD5-6, Table, and the AEAD suite (aes-128/192/256-gcm,
+  chacha20-ietf-poly1305 …). The 20 combinations the reference server also
+  accepts are verified byte-identical against it (e2e matrix).
 - **14 protocols**: origin, verify_simple, auth_simple, auth_sha1/v2/v4,
   auth_aes128_md5/sha1, auth_chain_a…f.
 - **6 obfs**: plain, http_simple/post/mix, tls1.2_ticket_auth/fastauth.
@@ -39,7 +40,13 @@ First release: a byte-compatible Rust port of the ssr-n client.
 
 ### Known limitations
 
-- `cast5`, `idea`, `rc2`, `seed` cipher methods are not implemented.
+- `cast5`, `idea`, `rc2`, `seed` and the three `camellia-*-cfb` cipher
+  methods are not implemented (7 of the 28 parsed names; camellia and the
+  others are accepted by the reference server, hence the dedicated SKIP rows
+  in the matrix).
+- `des-cfb` **is** implemented, but the reference server's mbedTLS backend
+  rejects it, so that matrix row is a server-side SKIP (the C client fails
+  the same way).
 - The AEAD "hk" (half-waterfall) combination still needs a review pass
   against ssr-n.
 - Protocols `verify_simple`/`auth_simple`/`auth_sha1`/`auth_sha1_v2` cannot
