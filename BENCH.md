@@ -164,3 +164,21 @@ is process-wide (all threads) over the window.
 
 **Result**: throughput rust/C = 103.4% (target >= 90%),
 CPU rust/C = 0.83x (target <= 1.5x) — throughput rust/C=103.42% (PASS, need >=90%)  cpu rust/C=0.83x (PASS, need <=1.5x)
+
+## 4. P2 end-to-end vs C client (2026-09-23)
+
+| field | value |
+|---|---|
+| config | aes-256-cfb / auth_aes128_sha1 / tls1.2_ticket_auth, loopback |
+| payload | 64 MiB random file x 3 runs, median |
+| server | /opt/ssr/ssr-server (d70342262c45) |
+| C client | /opt/ssr/ssr-client (988974dcdfa5) |
+| Rust client | /home/liangzhaoyuan12/work/rs/ssr-client-rs/target/release/ssr_client (6ed29f172df1) |
+
+| client | throughput MiB/s | median wall s | CPU % |
+|---|---|---|---|
+| C | 14.6 | 4.385263 | 99.9 |
+| Rust | 15.0 | 4.257087 | 75.6 |
+
+**Result**: throughput rust/C = 102.7% (target >= 90%),
+CPU rust/C = 0.76x (target <= 1.5x) — throughput rust/C=102.74% (PASS, need >=90%)  cpu rust/C=0.76x (PASS, need <=1.5x)
