@@ -302,7 +302,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
   - 1/8/64/100 并发流吞吐曲线；无锁竞争热点（Mutex 争用）才优化
   - 目标: 并发 64 时总吞吐 ≥ 单流的 8 倍（回环、有 12 核的前提）
 
-- [ ] P5 发布编译核对
+- [x] P5 发布编译核对（release 复测 P1 76 项入 BENCH.md FINAL 版；debug_assert 已剔除（assert 消息串不在二进制）；target-cpu=native 建议已注明，2026-09-23）
   - `cargo build --release` 后复测 P1；确认 release 无 debug_assert 拖累
   - 文档注明: 下游可用 `RUSTFLAGS="-C target-cpu=native"` 自行榨取，库本身不绑 CPU 特性
 

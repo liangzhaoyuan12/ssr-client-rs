@@ -752,3 +752,16 @@ client/server/origin、fd/RSS 跟踪；METHOD 环境变量支持对照实验）�
 
 **门禁**: 无代码改动（仅工具脚本+文档），238 测试/clippy/fmt/panic
 script/matrix 39/51 0 FAIL 基线未动；进程已清理。
+
+### ✅ P5 发布编译核对（2026-09-23）
+
+- **release 复测 P1**: 三 bench 76 项在最终代码（P3 优化后）空载重跑，
+  BENCH.md §1-§3 替换为 **FINAL** 版；protocol 表即 P3 后值（chain 12.09µs、
+  aes128 4.7-6.0µs）。cipher 表与前次稳定复现（aes-256-cfb 22.2/20.7）。
+- **debug_assert 无拖累**: `[profile.release]` 未开 debug-assertions
+  （cargo 默认 off，`rustc --print cfg -C debug-assertions=off` 佐证）；
+  实证——auth_chain 4 处 debug_assert 的消息串
+  "missing data_size_list context" **不在** release 二进制中（编译期剔除）。
+- **文档注明**（GOALS 原文）: BENCH.md §1 写入
+  下游可用 `RUSTFLAGS="-C target-cpu=native"` 自行榨取、库本身不绑 CPU 特性。
+- 门禁: build 0/0、clippy -D rc=0、fmt 0、panic script 0、cargo test **238/0**。
