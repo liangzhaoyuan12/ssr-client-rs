@@ -34,26 +34,26 @@ pub struct SsrClientConfig {
     pub udp_timeout: u32,
 }
 
-impl SsrClientConfig {
-    /// Create a new config with the given server address, port, password, method, protocol, and obfs.
-    pub fn new(
-        server: impl Into<String>,
-        server_port: u16,
-        password: impl Into<String>,
-        method: impl Into<String>,
-        protocol: impl Into<String>,
-        obfs: impl Into<String>,
-    ) -> Self {
+/// Sensible defaults for every field: loopback SOCKS5 on 1080, empty
+/// credentials, 300s idle / 6s connect / 6s UDP timeouts.
+///
+/// Build a config as a struct literal with `..Default::default()`:
+///
+/// ```ignore
+/// SsrClientConfig { server: "srv".into(), server_port: 8388, ..Default::default() }
+/// ```
+impl Default for SsrClientConfig {
+    fn default() -> Self {
         Self {
-            server: server.into(),
-            server_port,
+            server: String::new(),
+            server_port: 0,
             listen_address: "127.0.0.1".to_string(),
             listen_port: 1080,
-            password: password.into(),
-            method: method.into(),
-            protocol: protocol.into(),
+            password: String::new(),
+            method: String::new(),
+            protocol: String::new(),
             protocol_param: String::new(),
-            obfs: obfs.into(),
+            obfs: String::new(),
             obfs_param: String::new(),
             udp: false,
             idle_timeout: 300,
@@ -61,7 +61,9 @@ impl SsrClientConfig {
             udp_timeout: 6,
         }
     }
+}
 
+impl SsrClientConfig {
     /// Create a default config for testing (from hk.json values).
     pub fn default_test() -> Self {
         Self {

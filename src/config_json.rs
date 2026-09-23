@@ -288,14 +288,7 @@ pub fn config_from_json(text: &str) -> Result<SsrClientConfig, String> {
         _ => return Err("config root must be a JSON object".to_string()),
     };
 
-    let mut cfg = SsrClientConfig::new(
-        String::new(),
-        0,
-        String::new(),
-        String::new(),
-        String::new(),
-        String::new(),
-    );
+    let mut cfg = SsrClientConfig::default();
 
     if let Some(v) = obj.get("server").and_then(Json::as_str) {
         cfg.server = v.to_string();

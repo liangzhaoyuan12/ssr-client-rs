@@ -766,14 +766,15 @@ mod tests {
 
     #[test]
     fn test_ssr_client_new() {
-        let config = SsrClientConfig::new(
-            "127.0.0.1",
-            8388,
-            "password",
-            "aes-256-cfb",
-            "auth_aes128_sha1",
-            "tls1.2_ticket_auth",
-        );
+        let config = SsrClientConfig {
+            server: "127.0.0.1".to_string(),
+            server_port: 8388,
+            password: "password".to_string(),
+            method: "aes-256-cfb".to_string(),
+            protocol: "auth_aes128_sha1".to_string(),
+            obfs: "tls1.2_ticket_auth".to_string(),
+            ..Default::default()
+        };
         let client = SsrClient::new(config);
         assert!(!client.is_running());
         assert_eq!(client.config().server, "127.0.0.1");
@@ -782,14 +783,15 @@ mod tests {
 
     #[test]
     fn test_ssr_client_stop() {
-        let config = SsrClientConfig::new(
-            "127.0.0.1",
-            8388,
-            "password",
-            "aes-256-cfb",
-            "origin",
-            "plain",
-        );
+        let config = SsrClientConfig {
+            server: "127.0.0.1".to_string(),
+            server_port: 8388,
+            password: "password".to_string(),
+            method: "aes-256-cfb".to_string(),
+            protocol: "origin".to_string(),
+            obfs: "plain".to_string(),
+            ..Default::default()
+        };
         let client = SsrClient::new(config);
         assert!(!client.is_running());
         client.stop();
@@ -824,14 +826,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_ssr_client_start_and_stop() {
-        let config = SsrClientConfig::new(
-            "127.0.0.1",
-            19876,
-            "password",
-            "aes-256-cfb",
-            "origin",
-            "plain",
-        );
+        let config = SsrClientConfig {
+            server: "127.0.0.1".to_string(),
+            server_port: 19876,
+            password: "password".to_string(),
+            method: "aes-256-cfb".to_string(),
+            protocol: "origin".to_string(),
+            obfs: "plain".to_string(),
+            ..Default::default()
+        };
         let client = SsrClient::new(config);
 
         let client_ref = client.clone();
@@ -851,14 +854,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_connect_to_ssr_server_refused() {
-        let config = SsrClientConfig::new(
-            "127.0.0.1",
-            19999, // Nothing listening
-            "password",
-            "none",
-            "origin",
-            "plain",
-        );
+        let config = SsrClientConfig {
+            server: "127.0.0.1".to_string(),
+            server_port: 19999, // Nothing listening
+            password: "password".to_string(),
+            method: "none".to_string(),
+            protocol: "origin".to_string(),
+            obfs: "plain".to_string(),
+            ..Default::default()
+        };
         let result = connect_to_ssr_server(&config).await;
         assert!(result.is_err());
     }

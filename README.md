@@ -73,11 +73,17 @@ async fn main() {
     }"#;
     let config = config_from_json(json).expect("valid config");
 
-    // Option B: build it programmatically.
-    let _config2 = SsrClientConfig::new(
-        "example.com", 8388, "secret",
-        "aes-256-cfb", "auth_aes128_sha1", "tls1.2_ticket_auth",
-    );
+    // Option B: build it as a struct literal (all fields are public;
+    // fill in what you care about, the rest comes from Default).
+    let _config2 = SsrClientConfig {
+        server: "example.com".into(),
+        server_port: 8388,
+        password: "secret".into(),
+        method: "aes-256-cfb".into(),
+        protocol: "auth_aes128_sha1".into(),
+        obfs: "tls1.2_ticket_auth".into(),
+        ..Default::default()
+    };
 
     let client = SsrClient::new(config);
     client.start().await.expect("SOCKS5 listener + relay");
