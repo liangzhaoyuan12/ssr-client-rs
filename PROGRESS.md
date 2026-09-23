@@ -826,3 +826,25 @@ GOALS 允许 `cargo public-api` 或人工过 pub 清单——本机未装 cargo-
      本条记录时已修正见下小点）
 5. 门禁: build 0/0、test 238/0、clippy -D rc=0、fmt 0、doc 0、
    panic script 0、release warning 0。
+
+### ✅ M5 最终验收：主线准入门槛 G1-G12 全绿（2026-09-23）
+
+按 GOALS"主线准入门槛"表逐行跑命令（每条=本次验收的新鲜输出）:
+
+| # | 门禁 | 命令/度量 | 实测输出 | 判定 |
+|---|---|---|---|---|
+| G1 | 编译零告警 | `cargo build --release \| grep -c '^warning'` | **0** | ✅ |
+| G2 | clippy 零告警 | `cargo clippy --all-targets -- -D warnings` | **exit 0** | ✅ |
+| G3 | 格式统一 | `cargo fmt --all -- --check` | **exit 0** | ✅ |
+| G4 | 测试全绿 | `cargo test` | **238 passed / 0 failed**（基线 186+T/Q/R 新增；曾 239→237 为重复 #[test] 去重，覆盖不变） | ✅ |
+| G5 | 生产路径无 panic | `bash tools/check_panic_paths.sh` | **OK: 0 production-path panic sites**（白名单 0 条） | ✅ |
+| G6 | unsafe 审计 | `grep -rn 'unsafe ' src` | **0** | ✅ |
+| G7 | 公共 API 文档 | `cargo doc --no-deps` + `#![warn(missing_docs)]` | **doc warnings 0**；missing_docs 经 warnings=deny 编译通过即 0 | ✅ |
+| G8 | e2e 矩阵 | `python3 tools/matrix_test.py` + `e2e_udp.sh --all` | **39/51 PASS + 12 SKIP + 0 FAIL**（FAIL=0 实测），UDP_E2E_ALL_PASS；结果入库 tests/e2e/RESULTS.md（不依赖 /tmp） | ✅ |
+| G9 | 稳定性 | 600s soak + 异常注入 | **SOAK_PASS**: rss 3888→4528KB（+640KB≤10MB）、fd 11→11、panic 0；异常注入 `resilience --ignored` **4/4 passed**（kill/超时/半关闭/100 并发） | ✅ |
+| G10 | 空闲资源 | `resource_probe.sh --idle` | **RSS 3472KB ≤20MB、空闲 CPU 0.00%、fd 11、threads 5≤8、二进制 1,184,520B <5MB** | ✅ |
+| G11 | 性能对标 | `tools/bench_vs_c.sh`（当前 HEAD 重跑） | **吞吐 15.1 vs 14.6 MiB/s = 103.42% ≥90%；CPU 83.0% vs 99.8% = 0.83× ≤1.5×**（BENCH.md §4） | ✅ |
+| G12 | 发布资产 | 文件清点 + CI 本地等效 | README.md / CHANGELOG.md / LICENSE / .github/workflows/ci.yml / examples/socks5.rs **齐全**；CI 四门禁本地同命令全绿、yml 过 PyYAML 解析 | ✅ |
+
+**结论**: 12/12 全绿，本项目对 GOALS 当前目标（主线准入）视为完成。
+push 按用户指示（**不主动 push**）；远端 origin=https://cnb.cool/liangzhaoyuan12/ssr-client-rs。

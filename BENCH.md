@@ -146,3 +146,21 @@ is process-wide (all threads) over the window.
 - A `method=none` control run fails to connect (server rejects it), which
   confirms the `method` key is honored by both ends of the hand-written
   configs.
+
+## 4. P2 end-to-end vs C client (2026-09-23)
+
+| field | value |
+|---|---|
+| config | aes-256-cfb / auth_aes128_sha1 / tls1.2_ticket_auth, loopback |
+| payload | 64 MiB random file x 3 runs, median |
+| server | /opt/ssr/ssr-server (d70342262c45) |
+| C client | /opt/ssr/ssr-client (988974dcdfa5) |
+| Rust client | /home/liangzhaoyuan12/work/rs/ssr-client-rs/target/release/ssr_client (76e84c39821f) |
+
+| client | throughput MiB/s | median wall s | CPU % |
+|---|---|---|---|
+| C | 14.6 | 4.379351 | 99.8 |
+| Rust | 15.1 | 4.226786 | 83.0 |
+
+**Result**: throughput rust/C = 103.4% (target >= 90%),
+CPU rust/C = 0.83x (target <= 1.5x) — throughput rust/C=103.42% (PASS, need >=90%)  cpu rust/C=0.83x (PASS, need <=1.5x)

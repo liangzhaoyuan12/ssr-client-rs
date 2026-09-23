@@ -46,7 +46,26 @@
 
 ---
 
-## 当前状态快照（截至 2026-09-22）
+## 当前状态快照（最终：截至 2026-09-23，M5 验收全绿）
+
+**Phase T/Q/R/P/M 全部完成（12/12 门禁绿）**。基线对照（下表为改进前测量值）:
+
+| 门禁项 | 改进前（2026-09-22 基线） | 最终值（2026-09-23） |
+|---|---|---|
+| 测试 | 186 / 0 failed | **238 / 0 failed** |
+| cargo build warning | 35 | **0** |
+| clippy -D warnings | 未建立 | **exit 0** |
+| fmt --check | 未执行 | **exit 0** |
+| 生产路径 unwrap/expect/panic | 138（raw） | **0**（check_panic_paths.sh，白名单 0） |
+| unsafe | 5 | **0** |
+| [profile.release] | 未配置 | opt3 + thin LTO + CGU=1 + strip |
+| 空闲 RSS / 线程 / fd | 未测量 | **3472KB / 5 / 11**，CPU 0.00% |
+| 二进制体积 | 1,819,664B | **1,184,520B（−34.9%，<5MB）** |
+| 性能 | 无基准 | criterion 76 项 + **vs C: 103.4% 吞吐 / 0.83× CPU** |
+| 并发 | 未测量 | **64 流 146.7 MiB/s = 9.7× 单流（≥8×）**，无锁热点 |
+| CI | 无 | .github/workflows/ci.yml 四门禁（+e2e dispatch/self-hosted） |
+
+**基线表（历史记录）**:
 
 ### 基线数字（改进前的测量值，作为各 Phase 的对照组）
 
@@ -328,9 +347,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
   - `cargo public-api`（或人工过一遍 `pub` 清单）确认无私有类型泄漏、无无意义 pub
   - 内部类型（relay/obfs 细节）尽量 `pub(crate)`；确认 `Box<dyn Protocol>` 等 trait 边界合理
 
-- [ ] M5 最终验收
-  - 按"主线准入门槛"表逐行跑命令、贴输出到 PROGRESS.md
-  - 12 条门禁全绿 → 更新本文件状态快照 → commit → 按用户指示 push（**不主动 push**）
+- [x] M5 最终验收（G1-G12 十二门禁全绿，输出贴 PROGRESS.md；快照已更新；push 待用户指示，2026-09-23）
 
 ---
 
