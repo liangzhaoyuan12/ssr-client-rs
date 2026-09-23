@@ -617,3 +617,38 @@ tcp: 298 ok / 0 fail    udp: 20 ok / 0 fail    panics: 0    → SOAK_PASS
 - fd 全程恒定 11（R2 结论一致），0 panic，298+20 流量 0 失败
 - 首轮（无序列）对照: 4176→4592 = +416KB，同量级，两轮互证
 - 链接: 分配基线见 R4（64KB 往返 4/2 allocs），R2 fd 结论互证
+
+### ✅ P1 criterion 基准建立（2026-09-23）
+
+**交付**: dev-dep `criterion = "0.5"`（ustc 镜像本地缓存，loong64 无阻）+
+三个 `[[bench]] harness=false` 目标 + **BENCH.md**（76 项、含日期/机器/
+频率/方法/噪声带，回归对照自此有基线）:
+
+| bench | 项数 | 口径 |
+|---|---|---|
+| `benches/cipher_throughput.rs` | 42（21 方法×2） | 1MiB/次；encrypt=持久 ctx 流式，decrypt=每块新建 ctx（含 IV/salt 拆分） |
+| `benches/protocol_overhead.rs` | 22（14 pre + 8 post） | 1440B/包；pre 热身一次连接头；post 用 iter_batched 把组帧留在计时外 |
+| `benches/obfs_overhead.rs` | 12（6×2） | 1440B/包；稳态=HTTP 头已发/已剥、TLS 0x04+0x08（合成服务端 HMAC 响应驱动） |
+
+**关键数字**（Loongson-3A5000@2.3GHz，±10% 噪声带）:
+- cipher: salsa20 399 / chacha20-ietf 348 / aes-128-ctr 117 / aes-256-cfb
+  **22** / des-cfb 21 MiB/s（enc）——CFB 走 RustCrypto 软实现，P2 对标 C
+  的重点观察项；none 15.8 GiB/s（memcpy 基线）
+- protocol pre: origin 148ns … auth_chain ~12.5µs；post: origin 415ns …
+  auth_sha1 ~8.7µs
+- obfs: encode 193~481ns；decode 239ns~2.1µs（1440B 拷贝占大头）
+
+**过程中确认的两个协议事实**（记入 BENCH.md 脚注 + 此处）:
+1. **`impl Protocol` 缺 `AuthAES128::init_user_key` override**——trait 默认
+   空实现，经 `Box<dyn Protocol>` 调用是 no-op；producer 靠 pack 内部
+   inherent 调用补救，**纯收包实例会 user_key 为空 → HMAC 全错**。生产
+   relay 同实例先发后收所以未暴露；bench 构造已改为具体类型先 inherent
+   init。→ **M4 API 冻结复核项**（考虑给 trait impl 补 override）
+2. **auth_chain 无 client 自环**：pre 走 client 哈希链、post 走 server
+   哈希链，只有真 server（ssr-n `server_pre_encrypt`）能产 post 认的帧
+   （探针实证同实例首帧即 Err）；full_coverage 的 chain 测试也只测 pre。
+   → chain post 标 n/a，真实方向由 e2e 矩阵覆盖（39/51 全 PASS）
+
+**另发现 CHANGELOG 已知限制漏报**：camellia-128/192/256-cfb 同样未实现
+（bench skip + matrix CIPHER_SKIP 8 项一致）——M3 时补正。
+门禁: fmt 0、clippy -D rc=0、cargo test 全绿、panic 脚本 rc=0、0 warning

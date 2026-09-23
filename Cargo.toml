@@ -37,7 +37,20 @@ log = "0.4"
 
 [dev-dependencies]
 hex = "0.4"
-proptest = "1.11.0"
+proptest = "1"
+criterion = "0.5"
+
+[[bench]]
+name = "cipher_throughput"
+harness = false
+
+[[bench]]
+name = "protocol_overhead"
+harness = false
+
+[[bench]]
+name = "obfs_overhead"
+harness = false
 
 # Q2: freeze the zero-warning baseline — any new rustc warning fails the build.
 [lints.rust]

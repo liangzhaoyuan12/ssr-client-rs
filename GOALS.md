@@ -281,7 +281,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
 
 **任务**:
 
-- [ ] P1 criterion 基准建立
+- [x] P1 criterion 基准建立（criterion 0.5.1 loong64 编译运行；3 bench 76 项；BENCH.md 含日期/机器/频率，2026-09-23）
   - dev-dependency 加 `criterion`（loong64 编译验证，受阻则降级为自写计时 bin）
   - `benches/cipher_throughput.rs`: 每种 cipher 的 encrypt/decrypt MB/s（1MB buffer）
   - `benches/protocol_overhead.rs`: 各协议 pre_encrypt/post_decrypt 每包 ns 开销
