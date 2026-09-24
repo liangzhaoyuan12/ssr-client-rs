@@ -8,8 +8,7 @@ fn main() {
     for attempt in 1..=3 {
         println!("=== Attempt {} ===", attempt);
 
-        let mut obfs =
-            Tls12TicketAuthObfs::new("192.0.2.1".into(), 2800, String::new(), false);
+        let mut obfs = Tls12TicketAuthObfs::new("192.0.2.1".into(), 2800, String::new(), false);
         obfs.set_key(vec![0x42u8; 16]);
 
         match TcpStream::connect("192.0.2.1:2800") {
