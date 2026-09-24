@@ -7,8 +7,7 @@
 
 A byte-compatible Rust client library for the ShadowsocksR (SSR-N) protocol,
 providing the encryption, protocol, obfuscation and transport layers plus a
-SOCKS5 local proxy. Verified against the reference `ssr-n` C server
-(including the production server behind `hk.json`).
+SOCKS5 local proxy. Verified against the reference `ssr-n` C server.
 
 ## Features
 
@@ -144,7 +143,7 @@ SOCKS5 path never overlap; UDP ASSOCIATE is Mode A only.
 config path:
 
 ```bash
-cargo run --release --example socks5 hk.json   # point clients at 127.0.0.1:1080
+cargo run --release --example socks5 config.json   # point clients at 127.0.0.1:1080
 ```
 
 The same entry point ships as a binary: `ssr-client -c <config.json>`

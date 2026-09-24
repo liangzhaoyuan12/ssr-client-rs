@@ -1,20 +1,21 @@
 //! A minimal SOCKS5 proxy built on this library.
 //!
-//! Run with a config:    `cargo run --example socks5 -- hk.json`
-//! Or use built-in test defaults (hk.json values): `cargo run --example socks5`
+//! Run with a config:    `cargo run --example socks5 -- config.json`
 
-use ssr_client_rs::{config_json::config_from_json, SsrClient, SsrClientConfig};
+use ssr_client_rs::{config_json::config_from_json, SsrClient};
 
 #[tokio::main]
 async fn main() {
-    // Load ssr-n style JSON if given, otherwise fall back to built-in test values.
-    let config = match std::env::args().nth(1) {
-        Some(path) => {
-            let text = std::fs::read_to_string(&path).expect("read config");
-            config_from_json(&text).expect("parse config")
+    // Load an ssr-n style JSON config; a path is required.
+    let path = match std::env::args().nth(1) {
+        Some(path) => path,
+        None => {
+            eprintln!("Usage: cargo run --example socks5 -- <config.json>");
+            std::process::exit(1);
         }
-        None => SsrClientConfig::default_test(),
     };
+    let text = std::fs::read_to_string(&path).expect("read config");
+    let config = config_from_json(&text).expect("parse config");
 
     let listen = format!("{}:{}", config.listen_address, config.listen_port);
     let server = format!("{}:{}", config.server, config.server_port);

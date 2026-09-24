@@ -1,4 +1,3 @@
-use ssr_client_rs::config::SsrClientConfig;
 use ssr_client_rs::config_json::config_from_json;
 use ssr_client_rs::local::SsrClient;
 use tokio::signal;
@@ -40,7 +39,10 @@ async fn main() {
                 std::process::exit(1);
             }
         },
-        None => SsrClientConfig::default_test(),
+        None => {
+            eprintln!("No config given. Usage: ssr_client [-c <config.json>]");
+            std::process::exit(1);
+        }
     };
 
     let listen =

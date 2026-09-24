@@ -11,7 +11,7 @@
 #       R1 baseline: start the client, let it sit idle, then measure and
 #       check GOALS R1 targets:
 #           idle RSS <= 20MB, threads <= nproc+4, idle CPU = 0%
-#       Default config: ./hk.json when present, else a generated local one
+#       Default config: ./config.json when present, else a generated local one
 #       (idle measurement makes no connections either way). Exits non-zero
 #       when a target is missed.
 #
@@ -59,7 +59,7 @@ while [ "$#" -gt 0 ]; do
         *) echo "unknown arg: $1" >&2; exit 2 ;;
     esac
 done
-[ -n "$CONFIG" ] || { [ -r "$REPO/hk.json" ] && CONFIG="$REPO/hk.json"; }
+[ -n "$CONFIG" ] || { [ -r "$REPO/config.json" ] && CONFIG="$REPO/config.json"; }
 if [ -z "$CONFIG" ]; then
     CONFIG=$(mktemp /tmp/probe_idle.XXXXXX.json)
     cat > "$CONFIG" <<EOF

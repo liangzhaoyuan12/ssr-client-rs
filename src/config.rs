@@ -64,25 +64,3 @@ impl Default for SsrClientConfig {
         }
     }
 }
-
-impl SsrClientConfig {
-    /// Create a default config for testing (from hk.json values).
-    pub fn default_test() -> Self {
-        Self {
-            server: "192.0.2.1".to_string(),
-            server_port: 2800,
-            listen_address: "0.0.0.0".to_string(),
-            listen_port: 1080,
-            password: "test-password".to_string(),
-            method: CipherType::AES256CFB,
-            protocol: ProtocolType::AuthAES128SHA1,
-            protocol_param: String::new(),
-            obfs: ObfsType::TLS12TicketAuth,
-            obfs_param: String::new(),
-            udp: true,
-            idle_timeout: 300,
-            connect_timeout: 6,
-            udp_timeout: 6,
-        }
-    }
-}

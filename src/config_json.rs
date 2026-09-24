@@ -391,15 +391,15 @@ mod tests {
             "protocol": "auth_aes128_sha1",
             "obfs": "tls1.2_ticket_auth",
             "client_settings": {
-                "server": "192.0.2.1",
-                "server_port": 2800,
+                "server": "example.com",
+                "server_port": 8388,
                 "listen_address": "0.0.0.0",
                 "listen_port": 1080
             }
         }"#;
         let cfg = config_from_json(text).unwrap();
-        assert_eq!(cfg.server, "192.0.2.1");
-        assert_eq!(cfg.server_port, 2800);
+        assert_eq!(cfg.server, "example.com");
+        assert_eq!(cfg.server_port, 8388);
         assert_eq!(cfg.listen_address, "0.0.0.0");
         assert_eq!(cfg.listen_port, 1080);
         assert_eq!(cfg.password, "pw");

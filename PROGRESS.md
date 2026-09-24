@@ -206,7 +206,7 @@
 - **`tools/resource_probe.sh`**（T6 采样 + R1 基线复用同一脚本）:
   - 单发模式: `resource_probe.sh <pid>` → `rss_kb= fd= threads=`（soak 每 30s 调）
   - `--idle` 模式: 启动客户端空闲测量并断言 R1 目标
-  - **R1 基线实测（hk.json，release 构建）**: idle RSS **3616KB**（≤20MB PASS）、
+  - **R1 基线实测（config.json，release 构建）**: idle RSS **3616KB**（≤20MB PASS）、
     线程 **5**（≤nproc+4=8 PASS）、空闲 CPU **0.00%**（PASS）、fd=11
 - **`tools/soak_test.sh`**（T6）: 本地 64KB 文件每 2s curl 过 SOCKS5（TCP）+
   test_udp_e2e.py 每 30s 循环（UDP，每次新建会话压测 create/teardown，
@@ -353,7 +353,7 @@
   - **−635,088 字节 / −34.9%**
 - **回归全绿（新二进制实测）**: cargo test 237/0、矩阵 39/51+12SKIP 0 FAIL、
   UDP e2e ALL_PASS、clippy -D rc=0、fmt 0、panic 脚本 rc=0、
-  release 0 warning、二进制冒烟启动正常（读 hk.json 监听 1080）
+  release 0 warning、二进制冒烟启动正常（读 config.json 监听 1080）
 - 注: thin LTO + CGU=1 改变了全部 crate 的编译指纹，release 全量重建耗时明显变长（本机约 1 分钟级），属预期
 
 ### ✅ Q7 公共 API 文档与示例（2026-09-23）
@@ -375,8 +375,8 @@
 - **完成标准**:
   1. `cargo doc --no-deps` **exit 0、0 warning** ✓
   2. `cargo build --example socks5` 通过；实测
-     `./target/debug/examples/socks5 hk.json` 打印
-     `SOCKS5 listening on 0.0.0.0:1080 -> SSR 192.0.2.1:2800`，
+     `./target/debug/examples/socks5 config.json` 打印
+     `SOCKS5 listening on 0.0.0.0:1080 -> SSR <server>:<port>`，
      SIGINT 优雅退出 exit=0 ✓
 - **回归全绿**: cargo build/test 237-0、clippy -D rc=0、fmt 0、
   panic 脚本 rc=0、矩阵 39/51+12SKIP 0 FAIL、UDP e2e ALL_PASS、resilience 4/4
@@ -477,7 +477,7 @@ release 1,184,520 字节（移除依赖后 −44 字节）
 - **CHANGELOG.md** 新建: Keep a Changelog 格式 + **0.x semver 兼容性承诺**
   （0.x 允许 breaking、1.0 起严格 semver；字节级协议兼容算 feature 走 patch）
   + 0.1.0 首发条目（功能范围、已知限制 cast5/idea/rc2/seed 未实现与
-  AEAD hk 待复核、4 个协议的 server 侧 SKIP 说明）—— 同时满足 M3 内容要求
+  AEAD 生产组合待复核、4 个协议的 server 侧 SKIP 说明）—— 同时满足 M3 内容要求
 - **最强验证 `cargo package --allow-dirty` rc=0**: 元数据完整、LICENSE 被打包、
   打包产物独立重编译通过（`--list` 4173 行含 LICENSE/CHANGELOG/README）
 - **门禁**: build 0/0、clippy -D rc=0、fmt 0、panic 脚本 rc=0、cargo doc 0、
@@ -488,7 +488,7 @@ release 1,184,520 字节（移除依赖后 −44 字节）
 **脚本**: `tools/resource_probe.sh --idle [-c cfg] [-w warmup] [-m measure]`
 （T6 期间所建，R1 复用；单发模式供 soak 循环调用）
 
-**Phase R 正式基线**（Q10 后的 release 构建，hk.json，nproc=4）:
+**Phase R 正式基线**（Q10 后的 release 构建，config.json，nproc=4）:
 
 | 指标 | 实测 | 目标 | 结果 |
 |---|---|---|---|
@@ -550,7 +550,7 @@ FD_LEAK_PASS tcp=500 udp=100 baseline=11   rc=0
 **完成标准三项**: T5 全绿（resilience 4/4）✅ + T6 全绿（soak
 SOAK_PASS，fd 11→11）✅ + R1 达标（RSS 3488KB/线程5/CPU 0%）✅
 
-**stop() 干净退出实测**（release + hk.json）:
+**stop() 干净退出实测**（release + config.json）:
 ```
 before_sigint: pid=… threads=5 fd=11
 kill -INT → exited=yes exit_code=0
@@ -595,7 +595,7 @@ R4 alloc baseline (64KB, aes-256-cfb, 200 iters):
 **方法**: `tools/soak_test.sh`（本 R4 前为其加了每 30s 打印采样行），
 600s 持续 64KB 分块传输（TCP curl 2s/次 + UDP e2e 30s/次），warmup 60s。
 
-**序列**（release + hk.json，基线取 warmup 结束点 t=60s）:
+**序列**（release + config.json，基线取 warmup 结束点 t=60s）:
 ```
 baseline t+60s: 3888KB fd=11
 t+90..t+601s (30s 粒度, 19 点): 4064 → 4496 KB，fd 恒定 11（瞬时 13 为连接建立瞬间），线程恒 5
@@ -659,7 +659,7 @@ tcp: 298 ok / 0 fail    udp: 20 ok / 0 fail    panics: 0    → SOAK_PASS
 curl time_total，CPU 用 /proc/PID/stat utime+stime 差；结果自动追加
 BENCH.md §4）。
 
-配置: aes-256-cfb / auth_aes128_sha1 / tls1.2_ticket_auth（hk.json 同款
+配置: aes-256-cfb / auth_aes128_sha1 / tls1.2_ticket_auth（同款生产配置
 实际组合）+ 本地 ssr-server（d70342262c45）+ 随机 64MiB HTTP 源。
 
 | client | throughput | median wall | CPU |
@@ -777,7 +777,7 @@ yml 经 PyYAML 解析通过。repository=cnb.cool（M10 push 目标）。
 **M2**: README 全面重写，逐项对照 GOALS 清单:
 - 快速开始: 库依赖写法 + JSON 加载（`config_json::config_from_json`，
   **非根导出**，与 bin 同路径）+ `SsrClientConfig::new` 两种写法 +
-  `cargo run --example socks5 hk.json` 指引
+  `cargo run --example socks5 config.json` 指引
 - **API 示例经编译验证**: 片段原样抽为 example 编译 0 error
   （过程中抓到真错误 `SsrClient::new` 不返回 Result——修复）
 - 支持矩阵: cipher 21/28 实现（20 PASS + 8 SKIP 逐条注明原因：7 个

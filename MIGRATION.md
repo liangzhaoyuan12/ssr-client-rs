@@ -309,7 +309,7 @@ impl SsrClient {
 29. `local/api.rs` — SsrClient start/stop
 
 ### Phase 6: 集成测试 + 文档
-30. 用 hk.json 服务器参数集成测试
+30. 集成测试
 31. 完善错误处理和日志
 32. 编写 README 和使用示例
 

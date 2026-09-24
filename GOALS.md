@@ -85,11 +85,10 @@
 | e2e 测试资产 | **散落在 /tmp（会被清掉）** | 全部入库 `tests/e2e/` 或 `tools/` | T3 |
 | CI | 无 | GitHub Actions 四门禁 | M1 |
 
-### 已实现（经真实服务器验证）
+### 已实现
 
-- **生产配置**: aes-256-cfb + auth_aes128_sha1 + tls1.2_ticket_auth — 真实服务器 192.0.2.1:2800 已验证（httpbin 200, github 200, google 204, 5MB 下载 4.52 MB/s）
 - **流加密 (16/28)**: none, table, rc4, rc4-md5-6, rc4-md5, aes-128/192/256-cfb, aes-128/192/256-ctr, bf-cfb, des-cfb, salsa20, chacha20, chacha20-ietf
-- **AEAD (5/28)**: aes-128/192/256-gcm, chacha20-ietf-poly1305, xchacha20-ietf-poly1305 — 本地 e2e 通过（ssr-server plain+origin）；hk.json 生产组合（AEAD+tls obfs）因服务端二进制与源码不一致未互通
+- **AEAD (5/28)**: aes-128/192/256-gcm, chacha20-ietf-poly1305, xchacha20-ietf-poly1305 — 本地 e2e 通过（ssr-server plain+origin）
 - **协议 (14/14)**: origin, verify_simple, auth_simple, auth_sha1, auth_sha1_v2, auth_sha1_v4, auth_aes128_md5, auth_aes128_sha1, auth_chain_a~f — 全部 e2e 通过
 - **混淆 (5/6)**: plain, http_simple, http_post, http_mix, tls1.2_ticket_auth（tls1.2_ticket_fastauth 枚举有了待验证）
 - **UDP relay**: SOCKS5 UDP ASSOCIATE 全链路 e2e 通过（auth_chain_a / auth_aes128_sha1 / AEAD 三组，见 commit e40c827）
@@ -98,9 +97,8 @@
 ### 已完成阶段（记录，不再重做）
 
 - Phase 0 修复已知 Bug — 全部完成（commit 4138f7b 起）
-- Phase 1 hk.json 生产集成 — 完成（15 个 hk_integration 测试）
 - Phase 2 协议矩阵 — protocol 14/14、obfs 5/5、cipher 16/21 已实现项 e2e 通过；**加密方法矩阵的自动化回归脚本仍待 T3 入库**
-- Phase 4 AEAD — 本地 e2e 通过；hk 生产组合仍受服务端二进制阻塞（见阻塞项）
+- Phase 4 AEAD — 本地 e2e 通过
 - Phase 5/6/7 的旧版任务 — 被本版 T/Q/R/P/M 五阶段取代
 
 ### 未实现（枚举有了但代码空缺）
@@ -109,10 +107,6 @@
 |-----------|------|------|
 | camellia-128/192/256-cfb | 缺实现 | 服务端支持，值得实现 |
 | cast5-cfb / idea-cfb / rc2-cfb / seed-cfb | 缺实现 | 服务端本身不支持（C 客户端同样失败），优先级低 |
-
-### 阻塞项
-
-AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 实现与源码 `ssr-n/src/` 不一致（源码生成标准 TLS ClientHello 0x16 03 01，实际二进制产生 0x50 开头数据）。需要服务端对应源码版本或反编译 obfs 才能继续。**此阻塞不拖累主线合入**——本地 AEAD e2e 已通过，hk 组合标记为"服务端侧不一致，待复核"。
 
 ---
 
@@ -267,7 +261,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
 **任务**:
 
 - [x] R1 基线测量脚本（resource_probe.sh --idle 全 PASS，数字进 PROGRESS.md，2026-09-23）
-  - `tools/resource_probe.sh`: 启动 hk.json 客户端，采样 `/proc/<pid>/{status,fd}` + `ps -o nlwp`
+  - `tools/resource_probe.sh`: 启动待测客户端，采样 `/proc/<pid>/{status,fd}` + `ps -o nlwp`
   - 记录: 空闲 RSS、线程数、fd 数、`top -b -n2` 空闲 CPU
   - 目标: **空闲 RSS ≤ 20MB、线程数 ≤ CPU核数+4、空闲 CPU = 0%、fd = 基线（3 TCP/UDP 相关 + stdio）**
 
@@ -340,7 +334,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
   - 已测试组合表链到 `tests/e2e/RESULTS.md`
 
 - [x] M3 CHANGELOG + LICENSE（0.1.0 条目含功能范围+已知限制（补 camellia×3/des 说明、21/28 精确化）；LICENSE=上游 GPLv3 与 license 字段一致，2026-09-23）
-  - `CHANGELOG.md`: 0.1.0 首发条目（功能范围、已知限制: cast5/idea/rc2/seed 未实现、AEAD hk 组合待复核）
+  - `CHANGELOG.md`: 0.1.0 首发条目（功能范围、已知限制: cast5/idea/rc2/seed 未实现、AEAD 生产组合待复核）
   - `LICENSE` 文件与 Cargo.toml `license` 字段一致
 
 - [x] M4 API 冻结复核（人工过 pub 清单；private_interfaces 编译器证明 0；删死 API SsrBuffer+utils::buffer+bytes 直接依赖；ObfsRelay/Context/rc4_once 私有确认；2026-09-23）
@@ -403,7 +397,7 @@ AEAD + hk.json 生产组合：服务端二进制 `/opt/ssr/ssr-server` 的 obfs 
 
 - C 参考实现: `ssr-n/src/` 目录（协议层注释须标注 C 函数名与行号）
 - SSR 协议规范: 各协议的 C 实现是最权威的参考
-- ssr-n 配置格式: `hk.json` 和 `/opt/ssr/config.json`
+- ssr-n 配置格式: `/opt/ssr/config.json`（ssr-n JSON）
 - 服务端帮助: `/opt/ssr/ssr-server -h`
 - 已知 C 服务端 bug: auth_chain_f + key_len>16 启动 SIGBUS（我方取 min(16) 规避）
 
