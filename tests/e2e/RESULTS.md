@@ -1,6 +1,6 @@
 # e2e matrix results
 
-- date: 2026-09-23 18:18:56
+- date: 2026-09-25 00:28:47
 - client: RUST (target/release/ssr_client)
 - server: /opt/ssr/ssr-server sha256[:12]=d70342262c45
 - result: **39/51 passed**, 12 skipped (not run)

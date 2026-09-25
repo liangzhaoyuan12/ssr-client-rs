@@ -4,6 +4,13 @@
 [![MSRV](https://img.shields.io/badge/MSRV-1.82-blue.svg)](https://blog.rust-lang.org)
 [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-linux%20x86__64%20%7C%20loongarch64-lightgrey.svg)](#building)
+[![Crates.io](https://img.shields.io/crates/v/ssr-client-rs.svg)](https://crates.io/crates/ssr-client-rs)
+[![docs.rs](https://docs.rs/crates/ssr-client-rs/badge.svg)](https://docs.rs/ssr-client-rs)
+
+**English** | [简体中文](README.zh-CN.md)
+
+Full usage documentation: [`docs/USAGE.md`](docs/USAGE.md)
+（[中文](docs/USAGE.zh-CN.md)）
 
 A byte-compatible Rust client library for the ShadowsocksR (SSR-N) protocol,
 providing the encryption, protocol, obfuscation and transport layers plus a
@@ -41,8 +48,8 @@ The latest full matrix run lives in
 | UDP (3 combos) | **3 PASS** | — |
 
 Measured throughput and per-packet overhead live in [`BENCH.md`](BENCH.md)
-(head-to-head vs the C client: **103% of its throughput at 0.80× its CPU**,
-concurrency curve, cipher/protocol/obfs tables).
+(head-to-head vs the C client: **106.5% of its throughput at 0.77× its CPU**,
+concurrency curve, cipher/protocol/obfs/session-setup tables).
 
 ## Quick start
 
@@ -50,9 +57,12 @@ concurrency curve, cipher/protocol/obfs tables).
 
 ```toml
 [dependencies]
-ssr-client-rs = { git = "https://cnb.cool/liangzhaoyuan12/ssr-client-rs" }
+ssr-client-rs = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```
+
+Or track git: `ssr-client-rs = { git = "https://cnb.cool/liangzhaoyuan12/ssr-client-rs" }`.
+See [`docs/USAGE.md`](docs/USAGE.md) §2 for details.
 
 ```rust,no_run
 use ssr_client_rs::config_json::config_from_json;
@@ -137,19 +147,21 @@ async fn main() -> std::io::Result<()> {
 Mode A (`start()`) binds a port, so `open_session` failure modes and the
 SOCKS5 path never overlap; UDP ASSOCIATE is Mode A only.
 
-### Runnable example
+### Runnable examples
 
-[`examples/socks5.rs`](examples/socks5.rs) starts a SOCKS5 proxy from a JSON
-config path:
+| Example | Shows | Run |
+|---|---|---|
+| [`examples/socks5.rs`](examples/socks5.rs) | Mode A: SOCKS5 proxy from a JSON config | `cargo run --release --example socks5 -- config.json` |
+| [`examples/open_session.rs`](examples/open_session.rs) | Mode B: tunneled connection as a plaintext stream | `cargo run --release --example open_session -- config.json example.com 80` |
+| [`examples/config_builder.rs`](examples/config_builder.rs) | Build config both ways, parse names, show errors (offline) | `cargo run --example config_builder` |
 
-```bash
-cargo run --release --example socks5 config.json   # point clients at 127.0.0.1:1080
-```
-
-The same entry point ships as a binary: `ssr-client -c <config.json>`
+The `socks5` entry point also ships as a binary: `ssr-client -c <config.json>`
 (`src/bin/ssr_client.rs`).
 
 ## Configuration
+
+Full field-by-field reference (plus FAQ and error handling):
+[`docs/USAGE.md`](docs/USAGE.md) §5 — 中文版 [`docs/USAGE.zh-CN.md`](docs/USAGE.zh-CN.md).
 
 JSON keys are identical to the `SsrClientConfig` fields
 (`config_from_json`, cf. `ssr-n/src/config_json.c`); an optional
@@ -225,7 +237,7 @@ tests/                  # full coverage, proptest, resilience, e2e assets
 
 ## Performance
 
-See [`BENCH.md`](BENCH.md) for cipher throughput, per-packet protocol/obfs
+See [`BENCH.md`](BENCH.md) ([中文](BENCH.zh-CN.md)) for cipher throughput, per-packet protocol/obfs
 overhead, the concurrency curve (1/8/64/100 streams) and the head-to-head
 comparison against the C client — every table records date, machine, clock
 and methodology.
@@ -234,4 +246,6 @@ and methodology.
 
 [GPL-3.0-or-later](LICENSE) — this crate is a port of the `ssr-n` C client
 (GPLv3, “version 3 or any later version”); the upstream license applies.
-See [CHANGELOG.md](CHANGELOG.md) for release notes and known limitations.
+See [CHANGELOG.md](CHANGELOG.md) for release notes and known limitations,
+and [docs/USAGE.md](docs/USAGE.md) ([中文](docs/USAGE.zh-CN.md)) for the
+full usage guide.

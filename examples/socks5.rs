@@ -1,6 +1,8 @@
-//! A minimal SOCKS5 proxy built on this library.
+//! A minimal SOCKS5 proxy built on this library (integration Mode A).
+//! 基于本库的最小 SOCKS5 代理（集成模式 A）。
 //!
-//! Run with a config:    `cargo run --example socks5 -- config.json`
+//! Run with a config: `cargo run --release --example socks5 -- config.json`
+//! 带配置运行：`cargo run --release --example socks5 -- config.json`
 
 use ssr_client_rs::{config_json::config_from_json, SsrClient};
 

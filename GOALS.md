@@ -52,7 +52,7 @@
 
 | 门禁项 | 改进前（2026-09-22 基线） | 最终值（2026-09-23） |
 |---|---|---|
-| 测试 | 186 / 0 failed | **238 / 0 failed** |
+| 测试 | 186 / 0 failed | **229 / 0 failed**（2026-09-24 复核对账） |
 | cargo build warning | 35 | **0** |
 | clippy -D warnings | 未建立 | **exit 0** |
 | fmt --check | 未执行 | **exit 0** |
@@ -61,11 +61,19 @@
 | [profile.release] | 未配置 | opt3 + thin LTO + CGU=1 + strip |
 | 空闲 RSS / 线程 / fd | 未测量 | **3472KB / 5 / 11**，CPU 0.00% |
 | 二进制体积 | 1,819,664B | **1,184,520B（−34.9%，<5MB）** |
-| 性能 | 无基准 | criterion 76 项 + **vs C: 103.4% 吞吐 / 0.83× CPU** |
+| 性能 | 无基准 | criterion 4 目标 145 项（76+69 建连开销）+ **vs C: 106.5% 吞吐 / 0.77× CPU**（2026-09-25 G11 复验） |
 | 并发 | 未测量 | **64 流 146.7 MiB/s = 9.7× 单流（≥8×）**，无锁热点 |
 | CI | 无 | .github/workflows/ci.yml 四门禁（+e2e dispatch/self-hosted） |
 
-**基线表（历史记录）**:
+**229 对账（2026-09-24，精确到文件）**: M5 记录 238 → `a8b74c1`（脱敏回退）
+删 `tests/hk_integration.rs` −14（其 config/cipher/协议管线断言与
+`full_coverage.rs` 92 项 + `proptest_roundtrip` 6 项完全重叠，覆盖未损），
+`src/local/mod.rs` +2（U2/V2）、`src/utils/sockaddr.rs` +2（V1）、
+`tests/pipe_session.rs` +1（U2）→ 238−14+5 = **229**。分目标实测：
+lib 129 + full_coverage 92 + proptest 6 + alloc_count 1 + pipe_session 1，
+0 failed / 6 ignored。
+
+**基线表（历史记录）:**
 
 ### 基线数字（改进前的测量值，作为各 Phase 的对照组）
 
@@ -90,14 +98,14 @@
 - **流加密 (16/28)**: none, table, rc4, rc4-md5-6, rc4-md5, aes-128/192/256-cfb, aes-128/192/256-ctr, bf-cfb, des-cfb, salsa20, chacha20, chacha20-ietf
 - **AEAD (5/28)**: aes-128/192/256-gcm, chacha20-ietf-poly1305, xchacha20-ietf-poly1305 — 本地 e2e 通过（ssr-server plain+origin）
 - **协议 (14/14)**: origin, verify_simple, auth_simple, auth_sha1, auth_sha1_v2, auth_sha1_v4, auth_aes128_md5, auth_aes128_sha1, auth_chain_a~f — 全部 e2e 通过
-- **混淆 (5/6)**: plain, http_simple, http_post, http_mix, tls1.2_ticket_auth（tls1.2_ticket_fastauth 枚举有了待验证）
+- **混淆 (6/6)**: plain, http_simple, http_post, http_mix, tls1.2_ticket_auth, tls1.2_ticket_fastauth — 全部 e2e 通过（RESULTS.md obfs 轴 6 PASS）
 - **UDP relay**: SOCKS5 UDP ASSOCIATE 全链路 e2e 通过（auth_chain_a / auth_aes128_sha1 / AEAD 三组，见 commit e40c827）
-- SOCKS5 客户端, TCP 中继, JSON 配置解析, 单元测试 186 个
+- SOCKS5 客户端, TCP 中继, JSON 配置解析, 测试 229 个（2026-09-24 实测）
 
 ### 已完成阶段（记录，不再重做）
 
 - Phase 0 修复已知 Bug — 全部完成（commit 4138f7b 起）
-- Phase 2 协议矩阵 — protocol 14/14、obfs 5/5、cipher 16/21 已实现项 e2e 通过；**加密方法矩阵的自动化回归脚本仍待 T3 入库**
+- Phase 2 协议矩阵 — protocol 14/14、obfs 5/5、cipher 16/21 已实现项 e2e 通过；加密方法矩阵自动化已由 T4 `tools/matrix_test.py` 入库覆盖（2026-09-24 核账）
 - Phase 4 AEAD — 本地 e2e 通过
 - Phase 5/6/7 的旧版任务 — 被本版 T/Q/R/P/M 五阶段取代
 
@@ -128,6 +136,10 @@
 | G10 | 空闲资源 | R1 脚本测量 | RSS ≤ 20MB、空闲 CPU 0%、fd 稳定 |
 | G11 | 性能对标 | criterion + 对标 C 客户端 | 本地回环吞吐 ≥ C 客户端 90% |
 | G12 | 发布资产 | README/CHANGELOG/LICENSE/CI/examples | 齐全且 CI 绿 |
+
+**2026-09-25 复验**: G1-G12 对当前 HEAD（a8b74c1 + 发布文档批次）**12/12 全绿**
+（逐项真实输出见 PROGRESS.md「2026-09-25 00:29」会话记录）；G4 对账后为 229、
+G11 复验 106.47%/0.77×。停止条件满足 —— 对"push 主线"目标视为完成。
 
 ---
 

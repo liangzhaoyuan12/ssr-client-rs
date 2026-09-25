@@ -934,3 +934,37 @@ stop→start 重启周期可复用（复位在 subscribe 前）。
   doc 0、release 0 warning
 - 三路 e2e 复跑：matrix 39/51+12SKIP+0 FAIL、UDP ALL_PASS、管道 e2e ok
 - README listen_address 行注 :: 双栈；CHANGELOG Added(IPv6 段)+Fixed(stop 竞态)
+
+### ✅ 会话 2026-09-25 00:29 — GOALS 全项复核 + 12 门禁重验（12/12 全绿）
+
+**启动规程**: 已读 PROGRESS.md/GOALS.md；`git log -5` 确认 HEAD=a8b74c1
+（另有未提交的 GOAL.md 文档批次改动，见 GOAL.md 进度区）；
+`cargo test` 实测（带 target 头）= **229 passed / 0 failed / 6 ignored**。
+
+**测试数对账（GOALS 快照 238 → 实测 229，精确闭合）**:
+- `a8b74c1`（脱敏回退）删 `tests/hk_integration.rs` **−14**
+  （14 项均为离线 config/cipher/协议管线断言，与 `full_coverage.rs`
+  92 项的 `test_cipher_roundtrip`/`test_protocol_roundtrip`/large 变体 +
+  `proptest_roundtrip` 6 项**完全重叠**，覆盖未损 —— 已逐 fn 比对）
+- `src/local/mod.rs` 8→10 **+2**（U2/V2）、`src/utils/sockaddr.rs` 0→2
+  **+2**（V1）、`tests/pipe_session.rs` 0→1 **+1**（U2）
+- 238 − 14 + 5 = **229** ✓（`git grep '#\[test\]'` 864cc1c vs HEAD 逐文件对账）
+- 同步修正 GOALS.md 快照：测试 229、criterion 4 目标 145 项
+  （76+69 session_setup）、vs C 102.7%/0.76×、混淆 6/6、"Phase2 脚本待入库"备注
+
+**12 门禁重验（针对 a8b74c1 + 文档批次后的当前状态）**:
+
+| 门禁 | 结果 | 真实输出 |
+|---|---|---|
+| G1 release 告警 | ✅ | `cargo build --release 2>&1 \| grep -c '^warning'` = **0** |
+| G2 clippy -D | ✅ | `--all-targets -- -D warnings` **rc=0**（本日 GOAL.md 批次后跑） |
+| G3 fmt | ✅ | `cargo fmt --check` **exit 0**（同上） |
+| G4 测试 | ✅ | **229 / 0 failed / 6 ignored**，9 套件明细见上 |
+| G5 panic 路径 | ✅ | `tools/check_panic_paths.sh` = `OK: 0 production-path panic sites` **rc=0** |
+| G6 unsafe | ✅ | `grep -rn 'unsafe ' src` = **0** |
+| G7 文档 | ✅ | `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` **0 warning**（本日） |
+| G8 e2e 矩阵 | ✅ | `matrix_test.py` **39/51 PASS + 12 SKIP + 0 FAIL rc=0**；UDP 轴 3/3 PASS（aes-256-cfb+auth_chain_a / +auth_aes128_sha1 / aes-128-gcm+origin） |
+| G10 空闲资源 | ✅ | `resource_probe.sh --idle`（release 二进制）：RSS **3392KB**≤20MB、线程 **5**≤8、CPU **0.00%**、fd=10，**rc=0** |
+| G9 稳定性 | ✅ | `resilience -- --ignored` **4 passed / 0 failed rc=0**；600s soak **SOAK_PASS rc=0**：TCP 297 ok/0 fail、UDP 20 ok/0 fail、RSS 3904→4544KB（增 640KB≤10MB）、fd 11→11、panic 0 |
+| G11 性能对标 | ✅ | 独占跑 `bench_vs_c.sh` **rc=0**：C 13.9 / Rust 14.8 MiB/s → **吞吐 106.47% ≥90%、CPU 0.77× ≤1.5×**，双 PASS；BENCH.md §4 已更新为 2026-09-25 轮（03a3925de66d），README×2 与 BENCH.zh-CN §4 同步 |
+| G12 发布资产 | ✅ | README×2 / docs×2 / BENCH×2 / CHANGELOG / LICENSE / CI yml / examples×3 齐全；本地四门禁（=CI 内容）全绿 |

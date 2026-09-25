@@ -7,7 +7,18 @@ rust-version = "1.82"
 description = "Byte-compatible ShadowsocksR (SSR-N) client library: crypto, protocol, obfs and async TCP/UDP relay, ported from ssr-n"
 license = "GPL-3.0-or-later"
 repository = "https://cnb.cool/liangzhaoyuan12/ssr-client-rs"
+homepage = "https://cnb.cool/liangzhaoyuan12/ssr-client-rs"
+documentation = "https://docs.rs/ssr-client-rs"
 readme = "README.md"
+# Keep the published crate lean: no upstream C sources, no dev JSON dumps,
+# no internal planning docs (crates.io limit is 10 MB).
+exclude = [
+    "ssr-n/",
+    "*.json",
+    "GOALS.md",
+    "GOAL.md",
+    "PROGRESS.md",
+]
 keywords = ["shadowsocksr", "ssr", "proxy", "socks5", "cryptography"]
 categories = ["network-programming", "cryptography"]
 
@@ -51,7 +62,32 @@ harness = false
 name = "obfs_overhead"
 harness = false
 
+[[bench]]
+name = "session_setup"
+harness = false
+
 # Q2: freeze the zero-warning baseline — any new rustc warning fails the build.
+# No #[bench] anywhere in lib or bins: disable their libtest bench harnesses
+# so the documented `cargo bench -- --noplot` reaches the criterion targets
+# only (libtest rejects the --noplot flag).
+[lib]
+bench = false
+
+[[bin]]
+name = "ssr_client"
+path = "src/bin/ssr_client.rs"
+bench = false
+
+[[bin]]
+name = "debug_hmac"
+path = "src/bin/debug_hmac.rs"
+bench = false
+
+[[bin]]
+name = "access_google"
+path = "src/bin/access_google.rs"
+bench = false
+
 [lints.rust]
 warnings = "deny"
 

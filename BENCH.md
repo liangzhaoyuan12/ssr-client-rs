@@ -14,7 +14,12 @@ Reproducible micro-benchmark baseline for regression comparison (GOALS P1).
 | method | warm-up 300 ms, measure 1 s, 10 samples, `--noplot` |
 | noise | desktop session, no CPU isolation — treat ±10% as noise band |
 
-Reproduce: `cargo bench -- --noplot` (all three targets).
+Reproduce: `cargo bench -- --noplot` (all four targets; `[lib]` and the
+`[[bin]]`s set `bench = false` so libtest never sees `--noplot`).
+
+Re-verification 2026-09-24: all 76 §1–3 medians re-ran within
+−7.4%…+2.4% of the tables below (noise band ±10%, zero code changes in
+those paths → environment, not regression); §6 is from that run.
 
 ## 1. cipher throughput (1 MiB buffer, criterion — FINAL release-profile run)
 
@@ -97,7 +102,7 @@ via warm-up encode calls where reachable through the public API).
 | tls1.2_ticket_auth | 470 ns | 343 ns |
 | tls1.2_ticket_fastauth | 476 ns | 333 ns |
 
-## 4. P2 end-to-end vs C client (2026-09-23)
+## 4. P2 end-to-end vs C client (2026-09-25)
 
 | field | value |
 |---|---|
@@ -105,16 +110,15 @@ via warm-up encode calls where reachable through the public API).
 | payload | 64 MiB random file x 3 runs, median |
 | server | /opt/ssr/ssr-server (d70342262c45) |
 | C client | /opt/ssr/ssr-client (988974dcdfa5) |
-| Rust client | /home/liangzhaoyuan12/work/rs/ssr-client-rs/target/release/ssr_client (ecd9b44095fa) |
+| Rust client | /home/liangzhaoyuan12/work/rs/ssr-client-rs/target/release/ssr_client (03a3925de66d) |
 
 | client | throughput MiB/s | median wall s | CPU % |
 |---|---|---|---|
-| C | 14.6 | 4.385326 | 99.9 |
-| Rust | 15.1 | 4.248949 | 79.8 |
+| C | 13.9 | 4.603170 | 97.8 |
+| Rust | 14.8 | 4.332194 | 75.3 |
 
-**Result**: throughput rust/C = 103.4% (target >= 90%),
-CPU rust/C = 0.80x (target <= 1.5x) — throughput rust/C=103.42% (PASS, need >=90%)  cpu rust/C=0.80x (PASS, need <=1.5x)
-
+**Result**: throughput rust/C = 106.5% (target >= 90%),
+CPU rust/C = 0.77x (target <= 1.5x) — throughput rust/C=106.47% (PASS, need >=90%)  cpu rust/C=0.77x (PASS, need <=1.5x)
 ## 5. P4 concurrency scaling curve (2026-09-23)
 
 Local ssr-server + Rust client, aes-256-cfb / auth_aes128_sha1 /
@@ -146,39 +150,78 @@ is process-wide (all threads) over the window.
 - A `method=none` control run fails to connect (server rejects it), which
   confirms the `method` key is honored by both ends of the hand-written
   configs.
+## 6. session-setup cost (per NEW connection, criterion — 2026-09-24)
 
-## 4. P2 end-to-end vs C client (2026-09-23)
+Everything `establish_tunnel` + `assemble` do for each connection, minus the
+TCP connect itself (bench `session_setup`, fresh state inside the timed
+routine). Same machine/method as above.
 
-| field | value |
-|---|---|
-| config | aes-256-cfb / auth_aes128_sha1 / tls1.2_ticket_auth, loopback |
-| payload | 64 MiB random file x 3 runs, median |
-| server | /opt/ssr/ssr-server (d70342262c45) |
-| C client | /opt/ssr/ssr-client (988974dcdfa5) |
-| Rust client | /home/liangzhaoyuan12/work/rs/ssr-client-rs/target/release/ssr_client (76e84c39821f) |
+| method | env — `with_method` (KDF) | encrypt_ctx — IV + context |
+|---|---:|---:|
+| `none` | 1.54 µs | 3.01 µs |
+| `table` | 72.06 ms | 3.01 µs |
+| `rc4` | 2.40 µs | 4.14 µs |
+| `rc4-md5-6` | 2.41 µs | 5.31 µs |
+| `rc4-md5` | 2.41 µs | 5.34 µs |
+| `aes-128-cfb` | 2.40 µs | 6.11 µs |
+| `aes-192-cfb` | 2.68 µs | 6.04 µs |
+| `aes-256-cfb` | 2.68 µs | 6.51 µs |
+| `aes-128-ctr` | 2.40 µs | 5.30 µs |
+| `aes-192-ctr` | 2.67 µs | 6.86 µs |
+| `aes-256-ctr` | 2.67 µs | 5.39 µs |
+| `bf-cfb` | 2.40 µs | 49.10 µs |
+| `camellia-128-cfb` | 2.40 µs | — |
+| `camellia-192-cfb` | 2.69 µs | — |
+| `camellia-256-cfb` | 2.66 µs | — |
+| `cast5-cfb` | 2.41 µs | — |
+| `des-cfb` | 2.41 µs | 4.43 µs |
+| `idea-cfb` | 2.41 µs | — |
+| `rc2-cfb` | 2.42 µs | — |
+| `seed-cfb` | 2.42 µs | — |
+| `salsa20` | 2.67 µs | 3.54 µs |
+| `chacha20` | 2.67 µs | 3.53 µs |
+| `chacha20-ietf` | 2.68 µs | 3.63 µs |
+| `aes-128-gcm` | 2.39 µs | 3.88 µs |
+| `aes-192-gcm` | 2.65 µs | 3.93 µs |
+| `aes-256-gcm` | 2.68 µs | 3.98 µs |
+| `chacha20-ietf-poly1305` | 2.65 µs | 3.98 µs |
+| `xchacha20-ietf-poly1305` | 2.65 µs | 3.98 µs |
 
-| client | throughput MiB/s | median wall s | CPU % |
-|---|---|---|---|
-| C | 14.6 | 4.379351 | 99.8 |
-| Rust | 15.1 | 4.226786 | 83.0 |
+Notes: `table` rebuilds its two 256-entry substitution tables from the
+password on **every connection — 72 ms**, so avoid `table` under connection
+churn (the C client pays the same per-connection cost); the 7 methods with
+`—` parse but have no cipher implementation (ctx creation fails, same set
+as §1 skips); `bf-cfb`'s 49 µs encrypt_ctx is the Blowfish key schedule.
+All other env values sit in 1.54–2.69 µs (MD5-chain `bytes_to_key`, cost
+tracks key length).
 
-**Result**: throughput rust/C = 103.4% (target >= 90%),
-CPU rust/C = 0.83x (target <= 1.5x) — throughput rust/C=103.42% (PASS, need >=90%)  cpu rust/C=0.83x (PASS, need <=1.5x)
+| protocol | first packet — construct + `set_server_iv` + `client_pre_encrypt` (connection header included) |
+|---|---:|
+| `origin` | 138 ns |
+| `verify_simple` | 779 ns |
+| `auth_simple` | 944 ns |
+| `auth_sha1` | 2.47 µs |
+| `auth_sha1_v2` | 4.82 µs |
+| `auth_sha1_v4` | 3.24 µs |
+| `auth_aes128_md5` | 10.83 µs |
+| `auth_aes128_sha1` | 10.24 µs |
+| `auth_chain_a` | 13.82 µs |
+| `auth_chain_b` | 13.63 µs |
+| `auth_chain_c` | 14.00 µs |
+| `auth_chain_d` | 14.78 µs |
+| `auth_chain_e` | 12.24 µs |
+| `auth_chain_f` | 11.58 µs |
 
-## 4. P2 end-to-end vs C client (2026-09-23)
+| obfs | first encode — construct + `set_key` + handshake encode (HTTP header / TLS ClientHello) |
+|---|---:|
+| `plain` | 147 ns |
+| `http_simple` | 2.59 µs |
+| `http_post` | 4.19 µs |
+| `http_mix` | 3.15 µs |
+| `tls1.2_ticket_auth` | 3.13 µs |
+| `tls1.2_ticket_fastauth` | 4.61 µs |
 
-| field | value |
-|---|---|
-| config | aes-256-cfb / auth_aes128_sha1 / tls1.2_ticket_auth, loopback |
-| payload | 64 MiB random file x 3 runs, median |
-| server | /opt/ssr/ssr-server (d70342262c45) |
-| C client | /opt/ssr/ssr-client (988974dcdfa5) |
-| Rust client | /home/liangzhaoyuan12/work/rs/ssr-client-rs/target/release/ssr_client (6ed29f172df1) |
-
-| client | throughput MiB/s | median wall s | CPU % |
-|---|---|---|---|
-| C | 14.6 | 4.385263 | 99.9 |
-| Rust | 15.0 | 4.257087 | 75.6 |
-
-**Result**: throughput rust/C = 102.7% (target >= 90%),
-CPU rust/C = 0.76x (target <= 1.5x) — throughput rust/C=102.74% (PASS, need >=90%)  cpu rust/C=0.76x (PASS, need <=1.5x)
+**Takeaway**: a typical non-`table` connection pays ≈ 2.5 µs (KDF) + 3–7 µs
+(cipher ctx) + 0.14–14.8 µs (protocol first packet) + 0.15–4.6 µs (obfs
+handshake) ≈ **tens of µs of CPU** — invisible next to one network RTT;
+connection setup is network-bound, not compute-bound.
