@@ -10,7 +10,7 @@
 
 - **仓库**: `/home/liangzhaoyuan12/work/rs/ssr-client-rs`
 - **服务端**: `/opt/ssr/ssr-server` (LoongArch64 ELF, 配置在 `/opt/ssr/config.json`)
-- **参考实现**: `ssr-n/` 目录（C 源码）
+- **参考实现**: 上游 `ssr-n` C 项目（源码曾以 `ssr-n/` 目录随仓库保存，2026-09-25 已删除；代码注释仍标注上游 C 文件名与行号）
 - **迁移文档**: `MIGRATION.md`
 - **进度记录**: `PROGRESS.md`
 
@@ -407,7 +407,7 @@ G11 复验 106.47%/0.77×。停止条件满足 —— 对"push 主线"目标视�
 
 ## 参考资源
 
-- C 参考实现: `ssr-n/src/` 目录（协议层注释须标注 C 函数名与行号）
+- C 参考实现: 上游 `ssr-n` 的 `src/` 源码（本地 `ssr-n/` 目录已于 2026-09-25 删除；协议层注释须标注 C 函数名与行号）
 - SSR 协议规范: 各协议的 C 实现是最权威的参考
 - ssr-n 配置格式: `/opt/ssr/config.json`（ssr-n JSON）
 - 服务端帮助: `/opt/ssr/ssr-server -h`

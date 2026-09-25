@@ -179,7 +179,7 @@ async fn main() -> std::io::Result<()> {
 ## 5. 配置参考
 
 JSON 键名与 `SsrClientConfig` 字段一一对应（`config_from_json`，
-参见 `ssr-n/src/config_json.c`）；可选的 `client_settings` 对象可以
+参见上游 `ssr-n` 的 `src/config_json.c`）；可选的 `client_settings` 对象可以
 覆盖 `server*` / `listen*` 条目。
 
 | 字段 / JSON 键 | 类型 | 默认值（`new`） | 含义 |

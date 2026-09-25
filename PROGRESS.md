@@ -466,13 +466,13 @@ release 1,184,520 字节（移除依赖后 −44 字节）
 
 - `[package]` 补齐 6 项:
   - `description`: byte-compatible SSR client library …
-  - `license = "GPL-3.0-or-later"` —— **依据上游**: ssr-n/LICENSE 为 GPLv3，
+  - `license = "GPL-3.0-or-later"` —— **依据上游**: 上游 ssr-n 项目的 LICENSE 为 GPLv3，
     且源码头 "either version 3 … or (at your option) any later version"
     （shadowsocks-libev 血统）→ or-later；移植库必须同许可证
   - `repository = "https://cnb.cool/liangzhaoyuan12/ssr-client-rs"`（git remote 实测）
   - `readme = "README.md"`、`keywords = [shadowsocksr, ssr, proxy, socks5,
     cryptography]`、`categories = [network-programming, cryptography]`
-- **LICENSE 文件**: 直接复制 `ssr-n/LICENSE`（GPLv3 全文 675 行）到仓库根，
+- **LICENSE 文件**: 直接复制上游 ssr-n 项目的 `LICENSE`（GPLv3 全文 675 行）到仓库根，
   与 license 字段一致 —— 同时满足 M3 的 "LICENSE 与 Cargo.toml 一致"
 - **CHANGELOG.md** 新建: Keep a Changelog 格式 + **0.x semver 兼容性承诺**
   （0.x 允许 breaking、1.0 起严格 semver；字节级协议兼容算 feature 走 patch）
@@ -968,3 +968,22 @@ stop→start 重启周期可复用（复位在 subscribe 前）。
 | G9 稳定性 | ✅ | `resilience -- --ignored` **4 passed / 0 failed rc=0**；600s soak **SOAK_PASS rc=0**：TCP 297 ok/0 fail、UDP 20 ok/0 fail、RSS 3904→4544KB（增 640KB≤10MB）、fd 11→11、panic 0 |
 | G11 性能对标 | ✅ | 独占跑 `bench_vs_c.sh` **rc=0**：C 13.9 / Rust 14.8 MiB/s → **吞吐 106.47% ≥90%、CPU 0.77× ≤1.5×**，双 PASS；BENCH.md §4 已更新为 2026-09-25 轮（03a3925de66d），README×2 与 BENCH.zh-CN §4 同步 |
 | G12 发布资产 | ✅ | README×2 / docs×2 / BENCH×2 / CHANGELOG / LICENSE / CI yml / examples×3 齐全；本地四门禁（=CI 内容）全绿 |
+
+### ✅ 会话 2026-09-25 — 删除仓库内 `ssr-n/` 参考 C 源码 + 文档同步
+
+- **删除 `ssr-n/`**（68M、4103 文件）：无 `build.rs`，`cargo build/test`、
+  `tools/*.sh|py`、`tests/*` 均不读该目录（e2e 只调用已编译的
+  `/opt/ssr/ssr-server`），构建/测试/打包零依赖 → 纯参考源码，移除。
+- Cargo.toml `exclude` 去掉 `"ssr-n/"` 条目。
+- **文档同步**：README×2 / docs/USAGE×2 中 `cf. ssr-n/src/config_json.c`
+  改为"上游 ssr-n `src/config_json.c`"；GOALS.md 参考实现/参考资源两处、
+  PROGRESS.md LICENSE 出处两处改为"上游 ssr-n 项目"；GOAL.md 快照与
+  1.2 追加更新注记 + 进度行；CHANGELOG.md 新增 `### Changed` 条目。
+- **验证**：`cargo build --all-targets` Finished 0 error；
+  `cargo package --allow-dirty` Verified（`--list` = 75 文件，grep `ssr-n/` = 0）；
+  `cargo test --no-fail-fast` = **228 passed / 1 failed** —— 唯一失败
+  `local::tests::test_ssr_client_start_and_stop`，探针实证错误为
+  `Failed to bind 127.0.0.1:1080: Address already in use`（本机
+  `shadowsocksr-cl` pid 5455 占用 1080），既有环境冲突，与本次改动无关。
+- **未动**：`src/**` 内约 100 处 `ssr-n/src/*.c` 注释引用保留 —— 指向上游
+  项目文件（移植出处/许可证溯源），不是本仓库路径。

@@ -183,7 +183,7 @@ Mode A's SOCKS5 parsing and UDP ASSOCIATE never overlap with Mode B.
 ## 5. Configuration reference
 
 JSON keys are identical to the `SsrClientConfig` fields
-(`config_from_json`, cf. `ssr-n/src/config_json.c`); an optional
+(`config_from_json`, cf. upstream `ssr-n` `src/config_json.c`); an optional
 `client_settings` object can override the `server*` / `listen*` entries.
 
 | Field / JSON key | Type | Default (`new`) | Meaning |

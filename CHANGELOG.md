@@ -59,6 +59,14 @@ First release: a byte-compatible Rust port of the ssr-n client.
   connect time. Build configs as struct literals — `SsrClientConfig::new()`
   with positional arguments was removed.
 
+### Changed
+
+- The repository no longer vendors the upstream `ssr-n` C sources: the
+  `ssr-n/` directory (68 MB, reference only) was removed on 2026-09-25.
+  Nothing in the build, tests or tooling read it, and it was already
+  excluded from `cargo package`; source comments still cite upstream
+  `ssr-n` file names for provenance.
+
 ### Fixed
 
 - `SsrClient::stop()` no longer races `start()`: the shutdown signal is a

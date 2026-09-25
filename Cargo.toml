@@ -10,10 +10,9 @@ repository = "https://cnb.cool/liangzhaoyuan12/ssr-client-rs"
 homepage = "https://cnb.cool/liangzhaoyuan12/ssr-client-rs"
 documentation = "https://docs.rs/ssr-client-rs"
 readme = "README.md"
-# Keep the published crate lean: no upstream C sources, no dev JSON dumps,
-# no internal planning docs (crates.io limit is 10 MB).
+# Keep the published crate lean: no dev JSON dumps, no internal planning
+# docs (crates.io limit is 10 MB).
 exclude = [
-    "ssr-n/",
     "*.json",
     "GOALS.md",
     "GOAL.md",

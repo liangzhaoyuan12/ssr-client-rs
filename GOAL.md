@@ -19,6 +19,9 @@
   参考 C 源码和 5 个转储 JSON（auth_output / ssr_n_file_contents /
   ssr_n_source_files / ssr-obfs-complete / ssr_obfs_source，共 ~650K）全打进去了，
   crates.io 直接发不了（上限 10MB）。
+  **更新（2026-09-25）**：`ssr-n/` 已从仓库直接删除（构建 / 测试 / tools 脚本
+  均不依赖该目录），Cargo.toml `exclude` 相应去掉 `ssr-n/`；
+  复测 `cargo package --list --allow-dirty` = **75 文件**、`cargo package` Verified。
 - Cargo.toml 元数据：缺 `homepage`、`documentation`；description/keywords/categories/
   license/readme/rust-version 齐全，keywords 恰好 5 个（crates.io 上限）。
 - 文档：README.md / BENCH.md / CHANGELOG.md / MIGRATION.md 全英文，
@@ -38,6 +41,7 @@
       验证：`grep -E 'homepage|documentation|exclude' Cargo.toml`
 - [x] 1.2 打包瘦身生效。验证：`cargo package --list --allow-dirty | wc -l`
       且 `cargo package --list --allow-dirty | grep -cE 'ssr-n/|auth_output|GOALS|PROGRESS'` 为 0
+      （2026-09-25 更新：`ssr-n/` 已直接删除、exclude 不再含该条；复测 grep 计数 0、list=75）
 - [x] 1.3 打包可构建。验证：`cargo package --allow-dirty` 成功（Packaged + verified）
 
 ### Phase 2 — 性能测试补齐
@@ -118,3 +122,4 @@
 
 - 2026-09-24 | 6.1–6.4 | 总门禁与终验 | fmt --check = FMT_OK；clippy --all-targets -D warnings rc=0；cargo test 229 passed/0 failed（=基线 229）；cargo build --examples OK；RUSTDOCFLAGS=-D-warnings cargo doc --no-deps OK；cargo package = Packaged 75 files (171.4KiB compressed)，list=75；6 份双语文件互链 0 broken、H2 数 9/9、13/13、7/7；`-c/--config` 参数与 src/bin/ssr_client.rs:10 实证一致；./target/debug/config_builder 实跑输出生效配置
 - 2026-09-24 | 1.1–1.3 | Cargo.toml 补 homepage/documentation + exclude（ssr-n/、*.json、GOALS/GOAL/PROGRESS） | `cargo package --list` 4179→68 文件；`cargo package` = Packaged 68 files, 618.3KiB (150.4KiB compressed), Verified, Finished in 30.27s；禁运文件 grep 计数 0
+- 2026-09-25 | 1.1–1.2 | 删除仓库内 68M 的 `ssr-n/` 参考 C 源码目录（4103 文件），Cargo.toml `exclude` 去掉 `ssr-n/` 条目；README×2 / docs×2 / GOALS / GOAL / PROGRESS 中指向 `ssr-n/` 的说明改为"上游 ssr-n"引用 | `cargo build --all-targets` Finished 0 error；`cargo package --allow-dirty` Verified（`--list` = 75 文件，grep `ssr-n/` 计数 0）；`cargo test --no-fail-fast` = 228 passed / 1 failed（唯一失败 `local::tests::test_ssr_client_start_and_stop`，探针实证为 1080 端口被本机 shadowsocksr-cl 占用的既有环境冲突，与本次改动无关）

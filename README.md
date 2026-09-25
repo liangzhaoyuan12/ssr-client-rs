@@ -164,7 +164,7 @@ Full field-by-field reference (plus FAQ and error handling):
 [`docs/USAGE.md`](docs/USAGE.md) §5 — 中文版 [`docs/USAGE.zh-CN.md`](docs/USAGE.zh-CN.md).
 
 JSON keys are identical to the `SsrClientConfig` fields
-(`config_from_json`, cf. `ssr-n/src/config_json.c`); an optional
+(`config_from_json`, cf. upstream `ssr-n` `src/config_json.c`); an optional
 `client_settings` object can override the `server*` / `listen*` entries.
 
 | Field / JSON key | Type | Default (`new`) | Meaning |
