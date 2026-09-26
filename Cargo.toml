@@ -6,9 +6,8 @@ edition = "2021"
 rust-version = "1.82"
 description = "Byte-compatible ShadowsocksR (SSR-N) client library: crypto, protocol, obfs and async TCP/UDP relay, ported from ssr-n"
 license = "GPL-3.0-or-later"
-repository = "https://cnb.cool/liangzhaoyuan12/ssr-client-rs"
-homepage = "https://cnb.cool/liangzhaoyuan12/ssr-client-rs"
-documentation = "https://docs.rs/ssr-client-rs"
+repository = "https://github.com/liangzhaoyuan12/ssr-client-rs"
+homepage = "https://github.com/liangzhaoyuan12/ssr-client-rs"
 readme = "README.md"
 # Keep the published crate lean: no dev JSON dumps, no internal planning
 # docs (crates.io limit is 10 MB).
