@@ -143,7 +143,10 @@ impl SsrClient {
                             tokio::spawn(async move {
                                 let _permit = permit; // held for the connection's lifetime
                                 if let Err(e) = handle_connection(stream, &config, env).await {
-                                    log::debug!("Connection from {peer_addr} error: {e}");
+                                    // GOAL 5.1: failure reasons (timeout type,
+                                    // refused, reset) visible at warn for
+                                    // weak-network debugging.
+                                    log::warn!("Connection from {peer_addr} error: {e}");
                                 }
                             });
                         }
@@ -491,7 +494,7 @@ where
                 .await;
                 match n {
                     Ok(Ok(0)) => {
-                        ssr_debug!("[relay] Server closed after address");
+                        log::warn!("[relay] Server closed after address (premature close)");
                     }
                     Ok(Ok(n)) => {
                         ssr_debug!("[relay] Server feedback: {} bytes", n);
@@ -519,8 +522,11 @@ where
                         }
                         total_down += n as u64;
                     }
-                    _ => {
-                        ssr_debug!("[relay] Server feedback timeout/error");
+                    Err(_) => {
+                        log::warn!("[relay] Server feedback: read timed out (10s)");
+                    }
+                    Ok(Err(e)) => {
+                        log::warn!("[relay] Server feedback read error: {e}");
                     }
                 }
             } // end if need_feedback
@@ -536,7 +542,7 @@ where
         loop {
             tokio::select! {
                 _ = &mut idle_fut, if idle_on => {
-                    ssr_debug!("[relay] Idle timeout ({idle_secs}s), closing relay");
+                    log::warn!("[relay] Idle timeout ({idle_secs}s), closing relay");
                     break;
                 }
                 result = self.local_read.read(&mut local_buf) => {
@@ -588,7 +594,7 @@ where
                                     }
                                     Ok(Err(_)) => break,
                                     Err(_) => {
-                                        ssr_debug!("[relay] Drain deadline reached (GOAL 2.2)");
+                                        log::warn!("[relay] Drain deadline reached (GOAL 2.2)");
                                         break;
                                     }
                                 }
@@ -618,7 +624,7 @@ where
                             total_up += n as u64;
                         }
                         Err(e) => {
-                            ssr_debug!("[relay] Upstream read error: {e}");
+                            log::warn!("[relay] Upstream (client) read error: {e}");
                             break;
                         }
                     }
@@ -663,7 +669,7 @@ where
                             total_down += n as u64;
                         }
                         Err(e) => {
-                            ssr_debug!("[relay] Downstream read error: {e}");
+                            log::warn!("[relay] Downstream (server) read error: {e}");
                             break;
                         }
                     }
@@ -849,7 +855,7 @@ async fn establish_tunnel(
         match perform_obfs_handshake(&mut remote, &mut obfs).await {
             Ok(()) => ssr_debug!("[conn] Obfs handshake completed"),
             Err(e) => {
-                ssr_debug!("[conn] Obfs handshake failed: {e}");
+                log::warn!("[conn] Obfs handshake failed: {e}");
                 return Err(e);
             }
         }
@@ -920,7 +926,7 @@ impl SsrClient {
                 Err(e) => Err(e),
             };
             if let Err(e) = result {
-                ssr_debug!("[pipe] relay pump failed: {e}");
+                log::warn!("[pipe] relay pump failed: {e}");
                 *err_slot
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(e.to_string());

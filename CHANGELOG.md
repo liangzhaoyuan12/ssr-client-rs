@@ -18,6 +18,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behaviour are shipped as patch releases even when they change bytes on the
   wire.
 
+## [Unreleased]
+
+### Performance
+
+- **Per-connection cipher environment cache**: the substitution table / key
+  derivation is computed once per client instead of once per connection.
+  `table` method TTFB drops **72.9 ms → 0.1 ms (−99.3 %)**, now on par with
+  the C client. `none` derives the 16-byte EVP key exactly like ssr-n
+  (`enc_table_init` else-branch), which also fixes obfs/protocol HMAC
+  interop with `method = none`.
+- **Relay data path**: one fewer allocation per 8 KB chunk in both
+  directions (in-place encrypt/decrypt plumbing; AEAD keeps its framing
+  path). Steady state is 2 allocations per chunk per direction.
+- **`tls1.2_ticket_auth` / `fastauth` encode**: record fragments are packed
+  straight into the output buffer — 2 → 1 allocations per packet, obfs
+  encode ~47 % faster (`obfs_overhead` bench −47.8 % / −45.6 %).
+
+### Fixed (stability / weak networks)
+
+- SOCKS5 greeting and CONNECT replies are read frame-by-frame; split
+  packets no longer fail the handshake.
+- A stream-cipher IV split across TCP reads is reassembled instead of
+  erroring with "Ciphertext too short for IV".
+- Obfs handshake responses are loop-read until validated (10 s budget)
+  instead of a single read.
+- Every relay write is bounded by the idle timeout (300 s floor), and the
+  post-EOF drain loop is bounded too — a stalled peer can no longer pin a
+  task forever.
+- TCP keepalive (30 s idle / 10 s interval / 3 probes) and TCP_NODELAY on
+  both the SSR tunnel socket and the accepted SOCKS5 socket.
+- Accept-error backoff (1 ms → 100 ms, log-throttled) and a 4096
+  concurrent-connection ceiling (saturated accepts are dropped).
+
+### Notes
+
+- **No public API changes**: the exported surface is identical to 0.1.0
+  (verified by an API snapshot diff; all additions are `pub(crate)` /
+  private).
+
 ## [0.1.0] — unreleased
 
 First release: a byte-compatible Rust port of the ssr-n client.
