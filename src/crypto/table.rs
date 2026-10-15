@@ -2,7 +2,11 @@ use crate::utils::hash::md5;
 
 const OFFSET_ROL: fn(u8, usize) -> u64 = |p: u8, o: usize| -> u64 { (p as u64) << (8 * o) };
 
-/// Table cipher: substitution table generated from password
+/// Table cipher: substitution table generated from password.
+///
+/// `Clone` is additive and needed by GOAL 3.2 (per-connection env cache):
+/// the two 256-byte tables are pure data.
+#[derive(Clone)]
 pub struct TableCipher {
     enc_table: [u8; 256],
     dec_table: [u8; 256],

@@ -277,6 +277,26 @@ pub struct CipherEnv {
     aead_master_key: Vec<u8>,
 }
 
+/// GOAL 3.2: per-connection cloning of the reusable cipher environment.
+///
+/// Everything derived from the password (key, IV length, table, AEAD master
+/// key) is pure data and cheap to clone; the IV replay cache is a
+/// CONNECTION-scoped guard (each fresh connection may legitimately see IVs
+/// that another connection already used), so a clone always starts with an
+/// empty cache.
+impl Clone for CipherEnv {
+    fn clone(&self) -> Self {
+        Self {
+            method: self.method,
+            key: self.key.clone(),
+            iv_len: self.iv_len,
+            table_cipher: self.table_cipher.clone(),
+            iv_cache: Default::default(),
+            aead_master_key: self.aead_master_key.clone(),
+        }
+    }
+}
+
 impl CipherEnv {
     /// Build a cipher environment from a password and a method-name string.
     ///

@@ -38,6 +38,10 @@ pub struct SsrClient {
     /// (observed as a zombie test holding its listen port). A late subscriber
     /// always sees the latest value.
     shutdown: Arc<watch::Sender<bool>>,
+    /// GOAL 3.2: the reusable cipher environment (key / table / AEAD master
+    /// key), derived once per client instead of once per connection — the
+    /// `table` method's rebuild cost is ~72ms per connection (BENCH.md §6).
+    env_cache: Arc<std::sync::OnceLock<Arc<crate::crypto::cipher_env::CipherEnv>>>,
 }
 
 impl SsrClient {
@@ -47,7 +51,25 @@ impl SsrClient {
             config,
             running: Arc::new(AtomicBool::new(false)),
             shutdown: Arc::new(watch::channel(false).0),
+            env_cache: Arc::new(std::sync::OnceLock::new()),
         }
+    }
+
+    /// GOAL 3.2: the shared cipher environment for this client — derived
+    /// from the password once, then cloned per connection (each clone
+    /// starts with an empty IV replay cache, see `CipherEnv::clone`).
+    /// Construction errors surface on the first call.
+    fn base_env(&self) -> SsrResult<Arc<crate::crypto::cipher_env::CipherEnv>> {
+        if let Some(env) = self.env_cache.get() {
+            return Ok(Arc::clone(env));
+        }
+        let env = Arc::new(crate::crypto::cipher_env::CipherEnv::with_method(
+            &self.config.password,
+            self.config.method,
+        )?);
+        // A racing caller may lose the set() — harmless, contents identical.
+        let _ = self.env_cache.set(env.clone());
+        Ok(env)
     }
 
     /// Start the SOCKS5 proxy server.
@@ -91,6 +113,8 @@ impl SsrClient {
         // failure reply needs a parsed request first; dropping under load
         // is the standard behaviour.)
         let conn_limiter = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_CONNECTIONS));
+        // GOAL 3.2: build the cipher environment once for this run.
+        let base_env = self.base_env()?;
         // GOAL 2.5: exponential accept-error backoff counter.
         let mut accept_failures: u32 = 0;
 
@@ -115,9 +139,10 @@ impl SsrClient {
                                 continue;
                             };
                             let config = self.config.clone();
+                            let env = Arc::clone(&base_env);
                             tokio::spawn(async move {
                                 let _permit = permit; // held for the connection's lifetime
-                                if let Err(e) = handle_connection(stream, &config).await {
+                                if let Err(e) = handle_connection(stream, &config, env).await {
                                     log::debug!("Connection from {peer_addr} error: {e}");
                                 }
                             });
@@ -173,12 +198,18 @@ impl SsrClient {
 /// e2e sits two orders of magnitude below.
 const MAX_CONCURRENT_CONNECTIONS: usize = 4096;
 
-/// GOAL 2.4: TCP keepalive (30s idle / 10s interval / 3 retries) so a peer
-/// that vanished mid-flow (mobile network switch, NAT/conntrack expiry) is
-/// detected in ~60s instead of the ~15 minutes a dead route burns in kernel
-/// retransmission. The stream passes through std briefly to reach the socket
-/// options; it re-registers with the reactor on the way back. Applied to the
-/// tunnel socket and the accepted SOCKS5 socket before any I/O.
+/// Relay-socket tuning, applied to the tunnel socket and the accepted
+/// SOCKS5 socket before any I/O:
+///
+/// * GOAL 2.4 — TCP keepalive (30s idle / 10s interval / 3 retries) so a
+///   peer that vanished mid-flow (mobile network switch, NAT/conntrack
+///   expiry) is detected in ~60s instead of the ~15 minutes a dead route
+///   burns in kernel retransmission.
+/// * GOAL 3.1 — TCP_NODELAY: small obfs records must leave immediately;
+///   Nagle + delayed-ACK adds up to 40ms per small write.
+///
+/// The stream passes through std briefly to reach the keepalive options; it
+/// re-registers with the reactor on the way back.
 fn with_keepalive(stream: TcpStream) -> SsrResult<TcpStream> {
     let std = stream
         .into_std()
@@ -193,7 +224,13 @@ fn with_keepalive(stream: TcpStream) -> SsrResult<TcpStream> {
             .and_then(|()| sock.set_tcp_keepalive(&ka))
             .map_err(|e| SsrError::Connection(format!("set TCP keepalive: {e}")))?;
     }
-    TcpStream::from_std(std).map_err(|e| SsrError::Connection(format!("keepalive re-wrap: {e}")))
+    let stream = TcpStream::from_std(std)
+        .map_err(|e| SsrError::Connection(format!("keepalive re-wrap: {e}")))?;
+    // GOAL 3.1: TCP_NODELAY on the same sockets (tokio API, no round-trip).
+    stream
+        .set_nodelay(true)
+        .map_err(|e| SsrError::Connection(format!("set TCP_NODELAY: {e}")))?;
+    Ok(stream)
 }
 
 /// GOAL 2.1: hard ceiling for a single relay write when `idle_timeout` is
@@ -634,7 +671,11 @@ where
 /// Performs the full SOCKS5 handshake, establishes a tunnel to the
 /// configured SSR server (including the obfs handshake), then relays
 /// data through the tunnel.
-async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> SsrResult<()> {
+async fn handle_connection(
+    mut stream: TcpStream,
+    config: &SsrClientConfig,
+    base_env: Arc<crate::crypto::cipher_env::CipherEnv>,
+) -> SsrResult<()> {
     // GOAL 2.4: keepalive on the accepted SOCKS5 socket (a vanished app
     // must not leave the relay task waiting on a dead connection).
     stream = with_keepalive(stream)?;
@@ -717,7 +758,7 @@ async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> S
         connect_req.addr.display(),
         connect_req.port
     );
-    let tunnel = establish_tunnel(config, &connect_req.addr, connect_req.port).await?;
+    let tunnel = establish_tunnel(config, &connect_req.addr, connect_req.port, &base_env).await?;
 
     // Step 4: Send SOCKS5 success reply to client (the obfs handshake inside
     // establish_tunnel has completed by now, matching the historical order:
@@ -761,13 +802,16 @@ async fn establish_tunnel(
     config: &SsrClientConfig,
     addr: &socks5::TargetAddress,
     port: u16,
+    base_env: &crate::crypto::cipher_env::CipherEnv,
 ) -> SsrResult<Tunnel> {
     let mut remote = connect_to_ssr_server(config).await?;
     ssr_debug!("[conn] Connected to SSR server");
 
     use crate::crypto::aead::AeadCipher;
     use crate::crypto::cipher_env::CipherEnv;
-    let env = CipherEnv::with_method(&config.password, config.method)?;
+    // GOAL 3.2: per-connection clone of the cached environment (empty IV
+    // replay cache) instead of a full rebuild (~72ms for `table`).
+    let env: CipherEnv = base_env.clone();
     let method = config.method;
     let is_aead = AeadCipher::is_aead(method);
 
@@ -852,7 +896,8 @@ impl SsrClient {
             TargetAddr::IPv6(ip, p) => (socks5::TargetAddress::IPv6(ip), p),
             TargetAddr::Domain(name, p) => (socks5::TargetAddress::Domain(name.into()), p),
         };
-        let tunnel = establish_tunnel(&self.config, &addr, port).await?;
+        let base_env = self.base_env()?;
+        let tunnel = establish_tunnel(&self.config, &addr, port, &base_env).await?;
 
         // The relay pump and the caller share an in-memory duplex: the pump
         // runs the exact Mode-A `ObfsRelay::run` body against `pump_io`, and
@@ -1363,6 +1408,67 @@ mod tests {
             "probe interval"
         );
         assert_eq!(sock.tcp_keepalive_retries().unwrap(), 3, "probe retries");
+        // GOAL 3.1 rides the same tuning path.
+        assert!(std.nodelay().unwrap(), "TCP_NODELAY must be on");
+    }
+
+    // ── GOAL 3.2: per-connection CipherEnv cache ───────────────────────────
+
+    /// Clones carry every reusable byte but start with an empty IV replay
+    /// cache, and 1000 clones must cost far less than one `table` rebuild
+    /// (~72ms, BENCH.md §6) — that is the whole point of the cache.
+    #[test]
+    fn cipher_env_clone_is_scoped_and_cheap() {
+        use crate::crypto::cipher_env::CipherEnv;
+        let env = CipherEnv::new("pw", "table").unwrap();
+
+        // Reusable data survives the clone.
+        let c = env.clone();
+        assert_eq!(c.key(), env.key());
+        assert_eq!(c.iv_len(), env.iv_len());
+
+        // The replay cache is connection-scoped: never inherited.
+        let mut c2 = env.clone();
+        assert!(c2.check_iv(&[1, 2, 3]), "first sighting is fresh");
+        assert!(!c2.check_iv(&[1, 2, 3]), "second sighting is a replay");
+        let mut c3 = env.clone();
+        assert!(
+            c3.check_iv(&[1, 2, 3]),
+            "a fresh clone must not inherit another connection's IVs"
+        );
+
+        // Cost: 1000 clones must beat a single rebuild.
+        let t0 = std::time::Instant::now();
+        let rebuilt = CipherEnv::new("pw", "table").unwrap();
+        let rebuild = t0.elapsed();
+        let t1 = std::time::Instant::now();
+        for _ in 0..1000 {
+            std::hint::black_box(rebuilt.clone());
+        }
+        let clones = t1.elapsed();
+        assert!(
+            clones < rebuild,
+            "1000 clones ({clones:?}) must be cheaper than one rebuild ({rebuild:?})"
+        );
+    }
+
+    /// The client hands out the SAME cached env on every call.
+    #[tokio::test]
+    async fn base_env_is_cached_per_client() {
+        let config = SsrClientConfig {
+            server: "127.0.0.1".to_string(),
+            server_port: 8388,
+            password: "pw".to_string(),
+            method: CipherType::Table,
+            ..Default::default()
+        };
+        let client = SsrClient::new(config);
+        let a = client.base_env().unwrap();
+        let b = client.base_env().unwrap();
+        assert!(
+            Arc::ptr_eq(&a, &b),
+            "base_env must be built once per client"
+        );
     }
 
     #[test]
