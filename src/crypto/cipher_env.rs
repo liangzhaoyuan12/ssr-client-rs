@@ -290,24 +290,38 @@ impl CipherEnv {
 
     /// Build a cipher environment for an already parsed `CipherType`.
     ///
-    /// Stream methods derive the key with `bytes_to_key`, `table` builds the
-    /// substitution tables from the password and the AEAD methods keep only the
-    /// HKDF master key (C: `enc_key_init` / `cipher_env_new_instance`,
-    /// ssr-n/src/encrypt.c).
+    /// `none` and `table` both take C's `enc_table_init` route (`m <=
+    /// ss_cipher_table`): `table` keeps the password as key, `none` derives
+    /// the 16-byte MD5-EVP key (its substitution tables are built by C but
+    /// never used — encryption passes through). Stream methods derive the
+    /// key with `bytes_to_key`; AEAD methods keep only the HKDF master key
+    /// (C: `enc_key_init` / `cipher_env_new_instance`, ssr-n/src/encrypt.c).
     ///
     /// # Errors
     /// Returns `SsrError::InvalidCipherMethod` if an AEAD method has no key length
     /// in `AeadCipher::key_len_of` (defensive: every known AEAD method has one).
     pub fn with_method(password: &str, method: CipherType) -> SsrResult<Self> {
         match method {
-            CipherType::None => Ok(Self {
-                method,
-                key: Vec::new(),
-                iv_len: 0,
-                table_cipher: None,
-                iv_cache: Default::default(),
-                aead_master_key: Vec::new(),
-            }),
+            CipherType::None => {
+                // GOAL 1.5: C `cipher_env_new_instance` routes every
+                // `m <= ss_cipher_table` method — NONE included, its enum
+                // value is below TABLE — through `enc_table_init`, whose
+                // non-table else-branch derives a 16-byte MD5-EVP key
+                // (`cipher == NULL` -> `nkey = 16`, ssr-n/src/encrypt.c:
+                // 1246-1249). obfs/protocol HMACs are keyed from this on
+                // both ends; an empty key made every `none` x obfs/auth
+                // combination fail against the real server (6 combo-axis
+                // FAILs, control-proven the C client passes them).
+                let key = bytes_to_key(password.as_bytes(), 16);
+                Ok(Self {
+                    method,
+                    key,
+                    iv_len: 0,
+                    table_cipher: None,
+                    iv_cache: Default::default(),
+                    aead_master_key: Vec::new(),
+                })
+            }
             CipherType::Table => {
                 let tc = TableCipher::new(password.as_bytes());
                 Ok(Self {
@@ -360,9 +374,12 @@ impl CipherEnv {
     pub fn method(&self) -> CipherType {
         self.method
     }
-    /// Cipher key reported to the obfs/protocol layers (C: `enc_get_key_len`,
-    /// ssr-n/src/encrypt.c): the password bytes for `table`, and empty for `none`
-    /// and for every AEAD method.
+    /// Cipher key reported to the obfs/protocol layers (C: `enc_get_key`,
+    /// ssr-n/src/encrypt.c): the password bytes for `table`, the 16-byte
+    /// MD5-EVP derived key for `none` (C routes `none` through
+    /// `enc_table_init`'s else branch — `m <= ss_cipher_table`,
+    /// encrypt.c:1246-1249; GOAL 1.5 fixed our empty-key divergence), and
+    /// empty for every AEAD method (C never fills `enc_key` there).
     pub fn key(&self) -> &[u8] {
         &self.key
     }
@@ -924,5 +941,27 @@ mod tests {
         let env = CipherEnv::new("password", "aes-256-cfb").unwrap();
         let res = env.create_decrypt_ctx_from_ciphertext(&[0u8; 4]);
         assert!(res.is_err(), "pub contract for direct callers unchanged");
+    }
+
+    /// GOAL 1.5: `none` must report C's 16-byte MD5-EVP key (not empty) —
+    /// obfs/protocol HMACs are keyed from it on both ends of the wire.
+    #[test]
+    fn none_key_is_16_byte_md5_evp_not_empty() {
+        let env = CipherEnv::new("test-password", "none").unwrap();
+        assert_eq!(
+            env.key(),
+            bytes_to_key(b"test-password", 16).as_slice(),
+            "none key must be C's bytes_to_key(pass, 16) — encrypt.c:1246-1249"
+        );
+        assert_eq!(env.key().len(), 16);
+        assert_eq!(env.iv_len(), 0, "none keeps a zero IV");
+        // table stays password-bytes; AEAD stays empty (unchanged contracts).
+        let tbl = CipherEnv::new("test-password", "table").unwrap();
+        assert_eq!(tbl.key(), b"test-password");
+        let aead = CipherEnv::new("test-password", "aes-256-gcm").unwrap();
+        assert!(
+            aead.key().is_empty(),
+            "AEAD enc_key stays empty (C behavior)"
+        );
     }
 }

@@ -387,6 +387,230 @@
       "detail": ""
     },
     {
+      "axis": "combo",
+      "method": "none",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "none",
+      "protocol": "origin",
+      "obfs": "http_simple",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "none",
+      "protocol": "origin",
+      "obfs": "tls1.2_ticket_auth",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "none",
+      "protocol": "auth_aes128_sha1",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "none",
+      "protocol": "auth_aes128_sha1",
+      "obfs": "http_simple",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "none",
+      "protocol": "auth_aes128_sha1",
+      "obfs": "tls1.2_ticket_auth",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "none",
+      "protocol": "auth_chain_a",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "none",
+      "protocol": "auth_chain_a",
+      "obfs": "http_simple",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "none",
+      "protocol": "auth_chain_a",
+      "obfs": "tls1.2_ticket_auth",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "table",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "table",
+      "protocol": "origin",
+      "obfs": "http_simple",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "table",
+      "protocol": "origin",
+      "obfs": "tls1.2_ticket_auth",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "table",
+      "protocol": "auth_aes128_sha1",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "table",
+      "protocol": "auth_aes128_sha1",
+      "obfs": "http_simple",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "table",
+      "protocol": "auth_aes128_sha1",
+      "obfs": "tls1.2_ticket_auth",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "table",
+      "protocol": "auth_chain_a",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "table",
+      "protocol": "auth_chain_a",
+      "obfs": "http_simple",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "table",
+      "protocol": "auth_chain_a",
+      "obfs": "tls1.2_ticket_auth",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "aes-256-cfb",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "aes-256-cfb",
+      "protocol": "origin",
+      "obfs": "http_simple",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "aes-256-cfb",
+      "protocol": "origin",
+      "obfs": "tls1.2_ticket_auth",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "aes-256-cfb",
+      "protocol": "auth_aes128_sha1",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "aes-256-cfb",
+      "protocol": "auth_aes128_sha1",
+      "obfs": "http_simple",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "aes-256-cfb",
+      "protocol": "auth_aes128_sha1",
+      "obfs": "tls1.2_ticket_auth",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "aes-256-cfb",
+      "protocol": "auth_chain_a",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "aes-256-cfb",
+      "protocol": "auth_chain_a",
+      "obfs": "http_simple",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "aes-256-cfb",
+      "protocol": "auth_chain_a",
+      "obfs": "tls1.2_ticket_auth",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "combo",
+      "method": "aes-256-gcm",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
       "axis": "udp",
       "method": "aes-256-cfb+auth_chain_a",
       "protocol": "",

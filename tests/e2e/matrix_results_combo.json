@@ -23,56 +23,56 @@
       "method": "none",
       "protocol": "origin",
       "obfs": "tls1.2_ticket_auth",
-      "http": "ERR",
-      "detail": "ssr-server 2026/10/16 00:19 error  \u001b[31munexpect tunnel terminated. about _client_ \"(null)\": Unknown system er"
+      "http": "200",
+      "detail": ""
     },
     {
       "axis": "combo",
       "method": "none",
       "protocol": "auth_aes128_sha1",
       "obfs": "plain",
-      "http": "ERR",
-      "detail": "ssr-server 2026/10/16 00:19 error  \u001b[31munexpect tunnel terminated. about _client_ \"(null)\": Unknown system er"
+      "http": "200",
+      "detail": ""
     },
     {
       "axis": "combo",
       "method": "none",
       "protocol": "auth_aes128_sha1",
       "obfs": "http_simple",
-      "http": "ERR",
-      "detail": "ssr-server 2026/10/16 00:19 error  \u001b[31munexpect tunnel terminated. about _client_ \"(null)\": Unknown system er"
+      "http": "200",
+      "detail": ""
     },
     {
       "axis": "combo",
       "method": "none",
       "protocol": "auth_aes128_sha1",
       "obfs": "tls1.2_ticket_auth",
-      "http": "ERR",
-      "detail": "ssr-server 2026/10/16 00:19 error  \u001b[31munexpect tunnel terminated. about _client_ \"(null)\": Unknown system er"
+      "http": "200",
+      "detail": ""
     },
     {
       "axis": "combo",
       "method": "none",
       "protocol": "auth_chain_a",
       "obfs": "plain",
-      "http": "ERR",
-      "detail": "ssr-server 2026/10/16 00:19 error  \u001b[31munexpect tunnel terminated. about _client_ \"(null)\": Unknown system er"
+      "http": "200",
+      "detail": ""
     },
     {
       "axis": "combo",
       "method": "none",
       "protocol": "auth_chain_a",
       "obfs": "http_simple",
-      "http": "ERR",
-      "detail": "ssr-server 2026/10/16 00:19 error  \u001b[31munexpect tunnel terminated. about _client_ \"(null)\": Unknown system er"
+      "http": "200",
+      "detail": ""
     },
     {
       "axis": "combo",
       "method": "none",
       "protocol": "auth_chain_a",
       "obfs": "tls1.2_ticket_auth",
-      "http": "ERR",
-      "detail": "ssr-server 2026/10/16 00:19 error  \u001b[31munexpect tunnel terminated. about _client_ \"(null)\": Unknown system er"
+      "http": "200",
+      "detail": ""
     },
     {
       "axis": "combo",

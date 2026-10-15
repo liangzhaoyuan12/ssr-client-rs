@@ -39,7 +39,11 @@ fn test_cipher_roundtrip(method: &str, key_len: usize, iv_len: usize) {
 
 #[test]
 fn test_cipher_none() {
-    test_cipher_roundtrip("none", 0, 0);
+    // GOAL 1.5: `none` reports C's 16-byte MD5-EVP key (C routes none
+    // through enc_table_init's else branch, encrypt.c:1246-1249) — obfs/
+    // protocol HMACs on both ends are keyed from it. IV stays 0 and the
+    // byte stream still passes through unchanged.
+    test_cipher_roundtrip("none", 16, 0);
 }
 #[test]
 fn test_cipher_table() {
