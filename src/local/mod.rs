@@ -431,29 +431,30 @@ where
                 "[relay] Sending combined address+data: {} bytes",
                 combined.len()
             );
-            let framed = self.protocol.client_pre_encrypt(&combined)?;
-            ssr_debug!("[relay] Address framed: {} bytes", framed.len());
-            let mut encrypted =
-                self.cipher_env
-                    .encrypt_ctx(&mut self.encrypt_ctx, &framed, self.first_encrypt)?;
+            // GOAL 4.1: frame once (alloc), then encrypt IN PLACE — the
+            // framed buffer becomes the ciphertext (first packet additionally
+            // gets the IV prepended, one alloc per connection).
+            let mut buf = self.protocol.client_pre_encrypt(&combined)?;
+            ssr_debug!("[relay] Address framed: {} bytes", buf.len());
+            self.cipher_env
+                .encrypt_into(&mut self.encrypt_ctx, &mut buf, self.first_encrypt)?;
             if self.first_encrypt {
-                let mut with_iv = Vec::with_capacity(self.cipher_iv.len() + encrypted.len());
+                let mut with_iv = Vec::with_capacity(self.cipher_iv.len() + buf.len());
                 with_iv.extend_from_slice(&self.cipher_iv);
-                with_iv.extend_from_slice(&encrypted);
-                encrypted = with_iv;
+                with_iv.extend_from_slice(&buf);
+                buf = with_iv;
                 self.first_encrypt = false;
             }
             ssr_debug!(
                 "[relay] Encrypted: {} bytes, first 48: {}",
-                encrypted.len(),
-                encrypted
-                    .iter()
+                buf.len(),
+                buf.iter()
                     .take(48)
                     .map(|b| format!("{:02x}", b))
                     .collect::<Vec<_>>()
                     .join(" ")
             );
-            let encoded = self.obfs.client_encode(&encrypted)?;
+            let encoded = self.obfs.client_encode(&buf)?;
             ssr_debug!("[relay] Address obfs encoded: {} bytes", encoded.len());
             ssr_debug!(
                 "[relay] FULL HEX: {}",
@@ -488,17 +489,17 @@ where
                     Ok(Ok(n)) => {
                         ssr_debug!("[relay] Server feedback: {} bytes", n);
                         // Process server feedback (obfs decode, cipher decrypt, protocol post_decrypt)
-                        let (decrypted_obfs, _needs_feedback) =
+                        let (mut payload, _needs_feedback) =
                             self.obfs.client_decode(&remote_buf[..n])?;
-                        if !decrypted_obfs.is_empty() {
-                            // GOAL 1.2: one entry point for first-packet IV
-                            // assembly + streaming decrypt.
-                            let decrypted_cipher = self.ivbuf.push(
+                        if !payload.is_empty() {
+                            // GOAL 1.2/4.1: IV assembly + IN-PLACE decrypt —
+                            // the obfs-decoded buffer becomes the plaintext.
+                            self.ivbuf.push(
                                 &self.cipher_env,
                                 &mut self.decrypt_ctx,
-                                &decrypted_obfs,
+                                &mut payload,
                             )?;
-                            let decoded = self.protocol.client_post_decrypt(&decrypted_cipher)?;
+                            let decoded = self.protocol.client_post_decrypt(&payload)?;
                             if !decoded.is_empty() {
                                 write_guarded(
                                     "local write (feedback)",
@@ -557,15 +558,15 @@ where
                                 match read {
                                     Ok(Ok(0)) => { ssr_debug!("[relay] Server EOF after drain"); break; }
                                     Ok(Ok(n)) => {
-                                        let (decrypted_obfs, _) = self.obfs.client_decode(&remote_buf[..n])?;
-                                        if !decrypted_obfs.is_empty() {
-                                            // GOAL 1.2: IV assembly + decrypt
-                                            let decrypted_cipher = self.ivbuf.push(
+                                        let (mut payload, _) = self.obfs.client_decode(&remote_buf[..n])?;
+                                        if !payload.is_empty() {
+                                            // GOAL 1.2/4.1: IV assembly + in-place decrypt
+                                            self.ivbuf.push(
                                                 &self.cipher_env,
                                                 &mut self.decrypt_ctx,
-                                                &decrypted_obfs,
+                                                &mut payload,
                                             )?;
-                                            let decoded = self.protocol.client_post_decrypt(&decrypted_cipher)?;
+                                            let decoded = self.protocol.client_post_decrypt(&payload)?;
                                             if !decoded.is_empty() {
                                                 write_guarded(
                                                     "local write (drain)",
@@ -590,14 +591,15 @@ where
                         Ok(n) => {
                             idle_fut.as_mut().reset(tokio::time::Instant::now() + idle);
                             ssr_debug!("[relay] Upstream: {} bytes from client", n);
-                            // Protocol: frame the data
-                            let framed = self.protocol.client_pre_encrypt(&local_buf[..n])?;
-                            ssr_debug!("[relay] Protocol framed: {} bytes", framed.len());
-                            // Stateful cipher: encrypt with stream state
-                            let encrypted = self.cipher_env.encrypt_ctx(&mut self.encrypt_ctx, &framed, false)?;
-                            ssr_debug!("[relay] Encrypted: {} bytes", encrypted.len());
+                            // Protocol: frame the data (GOAL 4.1: the one
+                            // allocation of the steady-state upstream chain;
+                            // encryption then happens IN PLACE in it).
+                            let mut buf = self.protocol.client_pre_encrypt(&local_buf[..n])?;
+                            ssr_debug!("[relay] Protocol framed: {} bytes", buf.len());
+                            self.cipher_env.encrypt_into(&mut self.encrypt_ctx, &mut buf, false)?;
+                            ssr_debug!("[relay] Encrypted: {} bytes", buf.len());
                             // Obfs: wrap in TLS record
-                            let encoded = self.obfs.client_encode(&encrypted)?;
+                            let encoded = self.obfs.client_encode(&buf)?;
                             ssr_debug!("[relay] Obfs encoded: {} bytes", encoded.len());
                             write_guarded(
                                 "tunnel write (upstream)",
@@ -624,23 +626,23 @@ where
                             idle_fut.as_mut().reset(tokio::time::Instant::now() + idle);
                             ssr_debug!("[relay] Downstream: {} bytes from server", n);
                             // Obfs: unwrap TLS record
-                            let (decrypted_obfs, _needs_feedback) = self.obfs.client_decode(&remote_buf[..n])?;
-                            ssr_debug!("[relay] Obfs decoded: {} bytes", decrypted_obfs.len());
-                            if decrypted_obfs.is_empty() {
+                            let (mut payload, _needs_feedback) = self.obfs.client_decode(&remote_buf[..n])?;
+                            ssr_debug!("[relay] Obfs decoded: {} bytes", payload.len());
+                            if payload.is_empty() {
                                 continue;
                             }
-                            // Stateful cipher: decrypt with stream state
-                            // GOAL 1.2: IV assembly + streaming decrypt (first
-                            // packet may arrive with a split IV; later chunks
-                            // stream straight through inside push()).
-                            let decrypted_cipher = self.ivbuf.push(
+                            // Stateful cipher: GOAL 1.2/4.1 — IV assembly +
+                            // IN-PLACE decrypt; the obfs-decoded buffer
+                            // becomes the plaintext (0 extra allocations in
+                            // the steady state).
+                            self.ivbuf.push(
                                 &self.cipher_env,
                                 &mut self.decrypt_ctx,
-                                &decrypted_obfs,
+                                &mut payload,
                             )?;
-                            ssr_debug!("[relay] Decrypted: {} bytes", decrypted_cipher.len());
+                            ssr_debug!("[relay] Decrypted: {} bytes", payload.len());
                             // Protocol: unwrap framing
-                            let decoded = self.protocol.client_post_decrypt(&decrypted_cipher)?;
+                            let decoded = self.protocol.client_post_decrypt(&payload)?;
                             ssr_debug!("[relay] Protocol decoded: {} bytes", decoded.len());
                             if !decoded.is_empty() {
                                 write_guarded(

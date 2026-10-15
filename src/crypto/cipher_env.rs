@@ -443,6 +443,53 @@ impl CipherEnv {
         Ok((ctx, iv))
     }
 
+    /// GOAL 4.1: encrypt directly into the caller's buffer — zero output
+    /// allocations for every non-AEAD method (stream ciphers and `none`
+    /// transform in place; `table` substitutes in place). AEAD frames and
+    /// seals with length changes, so it keeps the allocating
+    /// [`Self::encrypt_ctx`] path internally.
+    ///
+    /// pub(crate) plumbing: the public `encrypt_ctx` contract is untouched,
+    /// the relay hot path just stops copying.
+    pub(crate) fn encrypt_into(
+        &self,
+        ctx: &mut EncryptContext,
+        buf: &mut Vec<u8>,
+        is_first: bool,
+    ) -> SsrResult<()> {
+        if AeadCipher::is_aead(self.method) {
+            *buf = self.encrypt_ctx(ctx, buf, is_first)?;
+            return Ok(());
+        }
+        if matches!(*ctx, EncryptContext::Table) {
+            if let Some(ref t) = self.table_cipher {
+                t.encrypt_into(buf);
+            }
+            return Ok(());
+        }
+        encrypt_in_place(ctx, buf)
+    }
+
+    /// GOAL 4.1: decrypt directly into the caller's buffer — the mirror of
+    /// [`Self::encrypt_into`] (AEAD keeps its allocating path internally).
+    pub(crate) fn decrypt_into(
+        &self,
+        ctx: &mut DecryptContext,
+        buf: &mut Vec<u8>,
+    ) -> SsrResult<()> {
+        if AeadCipher::is_aead(self.method) {
+            *buf = self.decrypt_ctx(ctx, buf)?;
+            return Ok(());
+        }
+        if matches!(*ctx, DecryptContext::Table) {
+            if let Some(ref t) = self.table_cipher {
+                t.decrypt_into(buf);
+            }
+            return Ok(());
+        }
+        decrypt_in_place(ctx, buf)
+    }
+
     fn make_encrypt_ctx(&self, iv: &[u8]) -> SsrResult<EncryptContext> {
         use CipherType as CT;
         Ok(match self.method {
@@ -840,35 +887,48 @@ impl IvSplitBuffer {
         }
     }
 
-    /// Feed one downstream chunk and get plaintext bytes back.
-    ///
-    /// While the first packet's IV is still incomplete this buffers and
-    /// returns an empty `Vec`; assembly resumes with the next chunk. Once the
-    /// context exists (`ctx.is_some()`) every call is a straight `decrypt_ctx`.
+    /// Feed one downstream chunk IN PLACE (GOAL 4.1): the buffer handed in
+    /// becomes the plaintext — zero output allocations once the context
+    /// exists. While the first packet's IV is still incomplete the buffer is
+    /// emptied (bytes move into `pending`); assembly resumes with the next
+    /// chunk. AEAD keeps its allocating salt/nonce path internally (its
+    /// framing changes lengths).
     pub(crate) fn push(
         &mut self,
         env: &CipherEnv,
         ctx: &mut Option<DecryptContext>,
-        data: &[u8],
-    ) -> SsrResult<Vec<u8>> {
+        data: &mut Vec<u8>,
+    ) -> SsrResult<()> {
         if let Some(c) = ctx.as_mut() {
-            return env.decrypt_ctx(c, data);
+            return env.decrypt_into(c, data);
         }
-        let (mut dctx, plain) = if self.pending.is_empty() && data.len() >= self.iv_len {
+        if AeadCipher::is_aead(env.method()) {
+            let (mut dctx, plain) = env.create_decrypt_ctx_from_ciphertext(data)?;
+            *data = plain;
+            env.decrypt_into(&mut dctx, data)?;
+            *ctx = Some(dctx);
+            return Ok(());
+        }
+        if self.pending.is_empty() && data.len() >= self.iv_len {
             // Common case: the IV (and maybe some body) arrived whole.
-            env.create_decrypt_ctx_from_ciphertext(data)?
-        } else {
-            self.pending.extend_from_slice(data);
-            if self.pending.len() < self.iv_len {
-                // IV not complete yet — keep buffering, emit nothing.
-                return Ok(Vec::new());
-            }
-            let pending = std::mem::take(&mut self.pending);
-            env.create_decrypt_ctx_from_ciphertext(&pending)?
-        };
-        let out = env.decrypt_ctx(&mut dctx, &plain)?;
+            let mut dctx = env.make_decrypt_ctx(&data[..self.iv_len])?;
+            data.drain(..self.iv_len);
+            env.decrypt_into(&mut dctx, data)?;
+            *ctx = Some(dctx);
+            return Ok(());
+        }
+        self.pending.extend_from_slice(data);
+        data.clear();
+        if self.pending.len() < self.iv_len {
+            // IV not complete yet — keep buffering, emit nothing.
+            return Ok(());
+        }
+        let mut dctx = env.make_decrypt_ctx(&self.pending[..self.iv_len])?;
+        self.pending.drain(..self.iv_len);
+        env.decrypt_into(&mut dctx, &mut self.pending)?;
         *ctx = Some(dctx);
-        Ok(out)
+        *data = std::mem::take(&mut self.pending);
+        Ok(())
     }
 }
 
@@ -890,11 +950,11 @@ mod tests {
         assert_eq!(env.decrypt_ctx(&mut dctx, &enc2).unwrap().as_slice(), p2);
     }
 
-    // ── GOAL 1.2: first-packet IV split across reads ───────────────────────
+    // ── GOAL 1.2 / 4.1: first-packet IV split + in-place decryption ───────
 
-    /// First chunk one byte short of the IV: buffer (empty out, no ctx),
-    /// then the remainder completes IV + body and decrypts correctly, and
-    /// subsequent chunks stream through the stored context.
+    /// First chunk one byte short of the IV: buffer (buffer emptied, no
+    /// ctx), then the remainder completes IV + body and decrypts IN PLACE,
+    /// and subsequent chunks stream through the stored context.
     #[test]
     fn iv_split_buffer_reassembles_split_first_packet() {
         let env = CipherEnv::new("password", "aes-256-cfb").unwrap();
@@ -910,19 +970,22 @@ mod tests {
 
         // Piece 1: one byte short of the IV — must not error (old behavior:
         // SsrError::Crypto "Ciphertext too short for IV").
-        let out = buf.push(&env, &mut ctx, &full[..iv_len - 1]).unwrap();
-        assert!(out.is_empty(), "buffering must emit nothing");
+        let mut piece = full[..iv_len - 1].to_vec();
+        buf.push(&env, &mut ctx, &mut piece).unwrap();
+        assert!(piece.is_empty(), "buffering must take the bytes in");
         assert!(ctx.is_none(), "no context until the IV is complete");
 
-        // Piece 2: the rest — IV + body decrypt to the plaintext.
-        let out = buf.push(&env, &mut ctx, &full[iv_len - 1..]).unwrap();
-        assert_eq!(out, p1);
+        // Piece 2: the rest — IV + body decrypt to the plaintext in place.
+        let mut piece = full[iv_len - 1..].to_vec();
+        buf.push(&env, &mut ctx, &mut piece).unwrap();
+        assert_eq!(piece, p1, "the input buffer must become the plaintext");
         assert!(ctx.is_some(), "context must exist after the IV completed");
 
         // Subsequent chunks stream through without touching the buffer.
         let p2 = b"second chunk";
-        let enc2 = env.encrypt_ctx(&mut ectx, p2, false).unwrap();
-        assert_eq!(buf.push(&env, &mut ctx, &enc2).unwrap(), p2);
+        let mut enc2 = env.encrypt_ctx(&mut ectx, p2, false).unwrap();
+        buf.push(&env, &mut ctx, &mut enc2).unwrap();
+        assert_eq!(enc2, p2);
         assert!(buf.pending.is_empty(), "pending buffer must stay drained");
     }
 
@@ -937,8 +1000,8 @@ mod tests {
 
         let mut buf = IvSplitBuffer::new(env.iv_len());
         let mut ctx = None;
-        let out = buf.push(&env, &mut ctx, &full).unwrap();
-        assert_eq!(out, p1);
+        buf.push(&env, &mut ctx, &mut full).unwrap();
+        assert_eq!(full, p1);
         assert!(ctx.is_some());
     }
 
@@ -949,9 +1012,55 @@ mod tests {
         assert_eq!(env.iv_len(), 0);
         let mut buf = IvSplitBuffer::new(env.iv_len());
         let mut ctx = None;
-        let out = buf.push(&env, &mut ctx, b"plain bytes").unwrap();
-        assert_eq!(out, b"plain bytes");
+        let mut data = b"plain bytes".to_vec();
+        buf.push(&env, &mut ctx, &mut data).unwrap();
+        assert_eq!(data, b"plain bytes");
         assert!(ctx.is_some());
+    }
+
+    /// GOAL 4.1: the in-place encrypt/decrypt paths must be byte-identical
+    /// to the public allocating paths across every non-AEAD family (two
+    /// contexts built from the SAME IV), and AEAD must keep working through
+    /// its delegating path.
+    #[test]
+    fn into_paths_match_pub_paths_byte_for_byte() {
+        let data: Vec<u8> = (0u8..=255).cycle().take(1440).collect();
+        for method in [
+            "none",
+            "table",
+            "rc4",
+            "rc4-md5",
+            "aes-128-cfb",
+            "aes-256-cfb",
+            "aes-256-ctr",
+            "bf-cfb",
+            "salsa20",
+            "chacha20-ietf",
+        ] {
+            let env = CipherEnv::new("equiv_pw", method).unwrap();
+            let iv = vec![0x37u8; env.iv_len()];
+            let mut e_pub = env.make_encrypt_ctx(&iv).unwrap();
+            let mut e_in = env.make_encrypt_ctx(&iv).unwrap();
+            let via_pub = env.encrypt_ctx(&mut e_pub, &data, false).unwrap();
+            let mut via_in = data.clone();
+            env.encrypt_into(&mut e_in, &mut via_in, false).unwrap();
+            assert_eq!(via_pub, via_in, "encrypt mismatch for {method}");
+
+            let mut d_pub = env.make_decrypt_ctx(&iv).unwrap();
+            let mut d_in = env.make_decrypt_ctx(&iv).unwrap();
+            let plain_pub = env.decrypt_ctx(&mut d_pub, &via_pub).unwrap();
+            let mut plain_in = via_in.clone();
+            env.decrypt_into(&mut d_in, &mut plain_in).unwrap();
+            assert_eq!(plain_pub, plain_in, "decrypt mismatch for {method}");
+            assert_eq!(plain_pub, data, "roundtrip mismatch for {method}");
+        }
+
+        // AEAD smoke: the in-place path delegates to the allocating one.
+        let env = CipherEnv::new("equiv_pw", "aes-256-gcm").unwrap();
+        let (mut ectx, _) = env.create_encrypt_ctx().unwrap();
+        let mut buf = data.clone();
+        env.encrypt_into(&mut ectx, &mut buf, true).unwrap();
+        assert!(buf.len() > data.len(), "AEAD must frame+seal");
     }
 
     /// Rejected still: a TOO-SHORT input passed directly to the public

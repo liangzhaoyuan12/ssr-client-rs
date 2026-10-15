@@ -59,6 +59,21 @@ impl TableCipher {
         data.iter().map(|&b| self.dec_table[b as usize]).collect()
     }
 
+    /// GOAL 4.1: in-place encryption substitution (no output allocation).
+    /// pub(crate) plumbing used by `CipherEnv::encrypt_into`.
+    pub(crate) fn encrypt_into(&self, buf: &mut [u8]) {
+        for b in buf.iter_mut() {
+            *b = self.enc_table[*b as usize];
+        }
+    }
+
+    /// GOAL 4.1: in-place decryption substitution (no output allocation).
+    pub(crate) fn decrypt_into(&self, buf: &mut [u8]) {
+        for b in buf.iter_mut() {
+            *b = self.dec_table[*b as usize];
+        }
+    }
+
     fn random_compare(x: u8, y: u8, salt: u32, key: u64) -> i32 {
         ((key % (x as u64 + salt as u64)) as i64 - (key % (y as u64 + salt as u64)) as i64) as i32
     }
