@@ -231,27 +231,24 @@ async fn socks5_greeting_fragmented_gets_reply() {
 /// Re-split every byte stream, both directions. Deterministic, no RNG, so
 /// failures reproduce.
 ///
-/// Default models REAL TCP segmentation: pieces of at most the loopback MSS
-/// (1400) — a sender write below MSS arrives whole, so only reads larger
-/// than MSS ever split. Sub-MSS write-boundary splits still happen naturally
-/// (separate `send()`s surface as separate reads). The C server was
-/// control-proven (FLAKY_CLIENT=c) to KILL a tunnel whose ClientHello is
-/// split below MSS, so sub-MSS artificial splitting is opt-in stress only:
+/// Directional piece sizes (per connection, read once via [`piece_size`]):
+/// * **up** (client → server): `FLAKY_CHUNK`, default 1400 (MSS) — the C
+///   server was control-proven (`FLAKY_CLIENT=c`) to KILL a tunnel whose
+///   ClientHello is split below MSS, so the up direction must respect real
+///   segmentation or it tests the server's limitation, not our code.
+/// * **down** (server → client): `FLAKY_CHUNK_DOWN`, default 64 — small
+///   enough that every handshake/feedback/response record splits, which is
+///   exactly what GOAL 1.3 (obfs handshake response reassembly), 1.4
+///   (feedback) and 1.2 (IV) must survive. Only OUR side ever sees these
+///   pieces; the server's own reads are untouched.
 ///
-/// * `FLAKY_TRANSPARENT=1` — forward verbatim: no chunking, no delay
-///   (isolates "proxy infrastructure" from "wire fragmentation").
-/// * `FLAKY_CHUNK=<n>` — fixed n-byte pieces (e.g. `3` = the aggressive
-///   stress mode that breaks even the reference C client on this server).
+/// `FLAKY_TRANSPARENT=1` forwards verbatim both ways (infrastructure control).
 async fn flaky_copy(
     mut src: tokio::net::tcp::OwnedReadHalf,
     mut dst: tokio::net::tcp::OwnedWriteHalf,
+    max_piece: usize,
 ) {
     let transparent = std::env::var_os("FLAKY_TRANSPARENT").is_some();
-    let fixed_chunk: Option<usize> = std::env::var("FLAKY_CHUNK")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .filter(|&n| n > 0);
-    let max_piece = fixed_chunk.unwrap_or(1400);
     let mut buf = vec![0u8; 4096];
     loop {
         let n = match src.read(&mut buf).await {
@@ -279,8 +276,20 @@ async fn flaky_copy(
     let _ = dst.shutdown().await;
 }
 
+/// Per-direction max forwarded piece: env override, else the directional
+/// default (up 1400 / down 64, see [`flaky_copy`]).
+fn piece_size(env_key: &str, default: usize) -> usize {
+    std::env::var(env_key)
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(default)
+}
+
 /// TCP proxy on `listen` that forwards to `target` with wire re-chunking.
 async fn spawn_flaky_proxy(listen: u16, target: u16) {
+    let up_piece = piece_size("FLAKY_CHUNK", 1400);
+    let down_piece = piece_size("FLAKY_CHUNK_DOWN", 64);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", listen))
         .await
         .expect("proxy bind");
@@ -296,8 +305,9 @@ async fn spawn_flaky_proxy(listen: u16, target: u16) {
             let (ir, iw) = inbound.into_split();
             let (or_, ow) = outbound.into_split();
             tokio::spawn(async move {
-                let a = tokio::spawn(flaky_copy(ir, ow));
-                let b = tokio::spawn(flaky_copy(or_, iw));
+                // ir→ow: client→server (up); or_→iw: server→client (down).
+                let a = tokio::spawn(flaky_copy(ir, ow, up_piece));
+                let b = tokio::spawn(flaky_copy(or_, iw, down_piece));
                 let _ = a.await;
                 let _ = b.await;
             });

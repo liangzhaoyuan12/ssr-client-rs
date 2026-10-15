@@ -1051,21 +1051,38 @@ async fn perform_obfs_handshake(
     remote.write_all(&client_hello).await?;
     ssr_debug!("[obfs] Sent ClientHello: {} bytes", client_hello.len());
 
-    // Read server response with timeout
+    // GOAL 1.3: read in a loop until `client_decode` reports the handshake
+    // response validated. The completion signal is the decode's second return
+    // value (`needs_feedback`): for tls1.2_ticket_auth it is true exactly
+    // when both HMACs passed and the instance flipped handshake bit 0x08
+    // (tls_ticket.rs validated exit) — and only obfs instances with
+    // `needs_handshake()` ever reach this function (establish_tunnel gates
+    // on it), i.e. only that obfs. Undecoded leftovers stay in the obfs
+    // recv_buffer and continue through the normal relay decode path; every
+    // read shares ONE 10s budget instead of a fresh timeout per read.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     let mut buf = vec![0u8; 8192];
-    let n = tokio::time::timeout(Duration::from_secs(10), remote.read(&mut buf))
-        .await
-        .map_err(|_| SsrError::Timeout("reading server response".to_string()))??;
-    if n == 0 {
-        return Err(SsrError::Connection(
-            "Server closed connection during handshake".to_string(),
-        ));
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let n = tokio::time::timeout(remaining, remote.read(&mut buf))
+            .await
+            .map_err(|_| SsrError::Timeout("reading server response".to_string()))??;
+        if n == 0 {
+            return Err(SsrError::Connection(
+                "Server closed connection during handshake".to_string(),
+            ));
+        }
+        ssr_debug!("[obfs] Handshake response fragment: {} bytes", n);
+        // `_decoded` is empty at validation time: the address package is only
+        // sent by the relay AFTER this function returns, so the server can
+        // only answer with handshake records here (pre-existing semantics —
+        // the old single-read path discarded it the same way).
+        let (_decoded, validated) = obfs_inst.client_decode(&buf[..n])?;
+        if validated {
+            ssr_debug!("[obfs] Handshake response validated");
+            break;
+        }
     }
-    ssr_debug!("[obfs] Received server response: {} bytes", n);
-
-    // Process server response
-    let (_decoded, needs_feedback) = obfs_inst.client_decode(&buf[..n])?;
-    ssr_debug!("[obfs] Needs feedback: {}", needs_feedback);
 
     // NOTE: We do NOT send the Finished+AppData here.
     // The relay will send it with the first real data from the SOCKS5 client.
