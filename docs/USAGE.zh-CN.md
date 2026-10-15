@@ -382,6 +382,28 @@ CI（`.github/workflows/ci.yml`）跑四道门：fmt / clippy / test / release
 ## 参见
 
 - [README.zh-CN.md](../README.zh-CN.md) —— 快速上手 / [English](../README.md)
+## 弱网行为
+
+下列边界均为内部硬上限，任何一端失联都不会把任务或文件描述符永久挂住
+（GOAL.md Phase 1–2）。除注明外均为默认值，无需配置：
+
+| 阶段 | 上限 | 来源 |
+|---|---|---|
+| TCP 连接 SSR 服务端 | `connect_timeout`（默认 **6 s**） | 配置 |
+| SOCKS5 greeting / CONNECT 应答 | 每帧 `max(connect_timeout, 2 s)` | 分帧读 |
+| obfs 握手响应 | 共 **10 s**，循环读到校验通过为止 | 握手循环 |
+| 服务端 feedback 读 | 10 s（非致命：记日志，relay 继续） | feedback 循环 |
+| relay 写（任一方向） | idle 超时，兜底上限 **300 s**——对端停止读取会被 EOF/RST 收尾而不是悬挂 | 写守卫 |
+| EOF 后排空 | 同写预算——服务端不关连接也不能扣住任务 | 有界排空 |
+| relay 空闲 | `idle_timeout`（默认 **300 s**） | 配置 |
+| TCP keepalive | 空闲 30 s / 间隔 10 s / 3 次探测（内核级） | 两侧 socket |
+| TCP_NODELAY | 开（tunnel + SOCKS5 socket） | 两侧 socket |
+| accept 错误 | 指数退避 1 ms → 100 ms，日志降噪 | 监听循环 |
+| 并发连接上限 | 4096（打满后新连接直接丢弃） | 信号量 |
+
+连接失败原因与超时类型以 `warn` 级别输出（弱网排障只需 `RUST_LOG=warn`）。
+流加密 IV 跨包自动重组；SOCKS5 握手按帧读取，天然容忍分片。
+
 - [BENCH.zh-CN.md](../BENCH.zh-CN.md) —— 性能报告 / [English](../BENCH.md)
 - [CHANGELOG.md](../CHANGELOG.md) —— 发布说明、兼容性承诺
 - [tests/e2e/RESULTS.md](../tests/e2e/RESULTS.md) —— 完整 e2e 矩阵结果

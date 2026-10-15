@@ -398,6 +398,31 @@ port of the `ssr-n` C client (GPLv3+), and the upstream license applies.
 ## See also
 
 - [README.md](../README.md) — quick reference / [中文](../README.zh-CN.md)
+## Weak-network behaviour
+
+All timeouts below are hard-bounded internally; none of them can pin a task
+or a file descriptor forever (GOAL.md Phases 1–2). No configuration is needed —
+the defaults apply unless noted.
+
+| stage | bound | source |
+|---|---|---|
+| TCP connect to SSR server | `connect_timeout` (default **6 s**) | config |
+| SOCKS5 greeting / CONNECT reply | `max(connect_timeout, 2 s)` per frame | framed reads |
+| Obfs handshake response | **10 s** total, loop-read until validated | handshake loop |
+| Server feedback read | 10 s (non-fatal: logged, relay continues) | feedback loop |
+| Relay write (any direction) | idle timeout, floor **300 s** — a peer that stops draining gets EOF/RST, not a hang | write guard |
+| Post-EOF drain | same write budget — a server that never closes cannot hold the task | bounded drain |
+| Relay idle | `idle_timeout` (default **300 s**) | config |
+| TCP keepalive | 30 s idle / 10 s interval / 3 probes (kernel-level) | both sockets |
+| TCP_NODELAY | on (tunnel + SOCKS5 socket) | both sockets |
+| Accept errors | backoff 1 ms → 100 ms, log-throttled | listener |
+| Concurrent connections | 4096 (saturated accepts are dropped) | semaphore |
+
+Connection-cause failures and timeout types are logged at `warn` level
+(`RUST_LOG=warn` is enough for weak-network triage). Stream-cipher IVs split
+across reads are reassembled automatically; fragmented SOCKS5 handshakes are
+tolerated by frame-by-frame reads.
+
 - [BENCH.md](../BENCH.md) — performance report / [中文](../BENCH.zh-CN.md)
 - [CHANGELOG.md](../CHANGELOG.md) — release notes, compatibility promise
 - [tests/e2e/RESULTS.md](../tests/e2e/RESULTS.md) — full e2e matrix results
