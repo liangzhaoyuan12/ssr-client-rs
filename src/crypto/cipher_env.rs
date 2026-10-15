@@ -773,6 +773,68 @@ impl CipherEnv {
     }
 }
 
+/// GOAL 1.2: assembles the leading IV of a stream-cipher first packet that
+/// arrives split across TCP reads.
+///
+/// The wire layer hands us obfs-decoded bytes in whatever pieces the socket
+/// delivered; if the very first piece is shorter than the cipher IV,
+/// [`CipherEnv::create_decrypt_ctx_from_ciphertext`] cannot build the context
+/// yet (and must keep erroring for direct callers — its documented contract
+/// is unchanged). This buffer holds the pieces until `iv_len` bytes have
+/// accumulated, then runs the normal IV-consumption path; every later chunk
+/// streams straight through [`CipherEnv::decrypt_ctx`].
+///
+/// `pub(crate)` on purpose: this is private plumbing, NOT a new
+/// `DecryptContext` variant — the enum is public, so a new variant would
+/// break the GOAL's API-freeze hard constraint (and downstream code cannot
+/// construct or observe this type at all).
+pub(crate) struct IvSplitBuffer {
+    pending: Vec<u8>,
+    iv_len: usize,
+}
+
+impl IvSplitBuffer {
+    /// `iv_len` comes from [`CipherEnv::iv_len`] (0 for none/table/AEAD,
+    /// which therefore never buffer here).
+    pub(crate) fn new(iv_len: usize) -> Self {
+        Self {
+            pending: Vec::new(),
+            iv_len,
+        }
+    }
+
+    /// Feed one downstream chunk and get plaintext bytes back.
+    ///
+    /// While the first packet's IV is still incomplete this buffers and
+    /// returns an empty `Vec`; assembly resumes with the next chunk. Once the
+    /// context exists (`ctx.is_some()`) every call is a straight `decrypt_ctx`.
+    pub(crate) fn push(
+        &mut self,
+        env: &CipherEnv,
+        ctx: &mut Option<DecryptContext>,
+        data: &[u8],
+    ) -> SsrResult<Vec<u8>> {
+        if let Some(c) = ctx.as_mut() {
+            return env.decrypt_ctx(c, data);
+        }
+        let (mut dctx, plain) = if self.pending.is_empty() && data.len() >= self.iv_len {
+            // Common case: the IV (and maybe some body) arrived whole.
+            env.create_decrypt_ctx_from_ciphertext(data)?
+        } else {
+            self.pending.extend_from_slice(data);
+            if self.pending.len() < self.iv_len {
+                // IV not complete yet — keep buffering, emit nothing.
+                return Ok(Vec::new());
+            }
+            let pending = std::mem::take(&mut self.pending);
+            env.create_decrypt_ctx_from_ciphertext(&pending)?
+        };
+        let out = env.decrypt_ctx(&mut dctx, &plain)?;
+        *ctx = Some(dctx);
+        Ok(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -789,5 +851,78 @@ mod tests {
         let (mut dctx, d1) = env.create_decrypt_ctx_from_ciphertext(&enc1).unwrap();
         assert_eq!(env.decrypt_ctx(&mut dctx, &d1).unwrap().as_slice(), p1);
         assert_eq!(env.decrypt_ctx(&mut dctx, &enc2).unwrap().as_slice(), p2);
+    }
+
+    // ── GOAL 1.2: first-packet IV split across reads ───────────────────────
+
+    /// First chunk one byte short of the IV: buffer (empty out, no ctx),
+    /// then the remainder completes IV + body and decrypts correctly, and
+    /// subsequent chunks stream through the stored context.
+    #[test]
+    fn iv_split_buffer_reassembles_split_first_packet() {
+        let env = CipherEnv::new("password", "aes-256-cfb").unwrap();
+        let (mut ectx, iv) = env.create_encrypt_ctx().unwrap();
+        let p1 = b"hello split world";
+        let mut full = iv.clone();
+        full.extend_from_slice(&env.encrypt_ctx(&mut ectx, p1, true).unwrap());
+
+        let iv_len = env.iv_len();
+        assert!(iv_len >= 16, "aes-256-cfb IV must be non-trivial");
+        let mut buf = IvSplitBuffer::new(iv_len);
+        let mut ctx: Option<DecryptContext> = None;
+
+        // Piece 1: one byte short of the IV — must not error (old behavior:
+        // SsrError::Crypto "Ciphertext too short for IV").
+        let out = buf.push(&env, &mut ctx, &full[..iv_len - 1]).unwrap();
+        assert!(out.is_empty(), "buffering must emit nothing");
+        assert!(ctx.is_none(), "no context until the IV is complete");
+
+        // Piece 2: the rest — IV + body decrypt to the plaintext.
+        let out = buf.push(&env, &mut ctx, &full[iv_len - 1..]).unwrap();
+        assert_eq!(out, p1);
+        assert!(ctx.is_some(), "context must exist after the IV completed");
+
+        // Subsequent chunks stream through without touching the buffer.
+        let p2 = b"second chunk";
+        let enc2 = env.encrypt_ctx(&mut ectx, p2, false).unwrap();
+        assert_eq!(buf.push(&env, &mut ctx, &enc2).unwrap(), p2);
+        assert!(buf.pending.is_empty(), "pending buffer must stay drained");
+    }
+
+    /// Whole first packet in one call: fast path, no behavior change.
+    #[test]
+    fn iv_split_buffer_whole_packet_fast_path() {
+        let env = CipherEnv::new("password", "aes-256-cfb").unwrap();
+        let (mut ectx, iv) = env.create_encrypt_ctx().unwrap();
+        let p1 = b"one-shot";
+        let mut full = iv;
+        full.extend_from_slice(&env.encrypt_ctx(&mut ectx, p1, true).unwrap());
+
+        let mut buf = IvSplitBuffer::new(env.iv_len());
+        let mut ctx = None;
+        let out = buf.push(&env, &mut ctx, &full).unwrap();
+        assert_eq!(out, p1);
+        assert!(ctx.is_some());
+    }
+
+    /// iv_len = 0 (none): straight pass-through, never buffers.
+    #[test]
+    fn iv_split_buffer_zero_iv_passthrough() {
+        let env = CipherEnv::new("password", "none").unwrap();
+        assert_eq!(env.iv_len(), 0);
+        let mut buf = IvSplitBuffer::new(env.iv_len());
+        let mut ctx = None;
+        let out = buf.push(&env, &mut ctx, b"plain bytes").unwrap();
+        assert_eq!(out, b"plain bytes");
+        assert!(ctx.is_some());
+    }
+
+    /// Rejected still: a TOO-SHORT input passed directly to the public
+    /// helper keeps its documented error (API contract unchanged).
+    #[test]
+    fn create_decrypt_ctx_short_input_still_errors() {
+        let env = CipherEnv::new("password", "aes-256-cfb").unwrap();
+        let res = env.create_decrypt_ctx_from_ciphertext(&[0u8; 4]);
+        assert!(res.is_err(), "pub contract for direct callers unchanged");
     }
 }

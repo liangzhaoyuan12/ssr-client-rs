@@ -155,6 +155,10 @@ struct ObfsRelay<LR, LW> {
     protocol: Box<dyn crate::protocol::Protocol>,
     encrypt_ctx: crate::crypto::cipher_env::EncryptContext,
     decrypt_ctx: Option<crate::crypto::cipher_env::DecryptContext>,
+    /// GOAL 1.2: reassembles a first downstream packet whose cipher IV
+    /// arrived split across socket reads (see `IvSplitBuffer` for why this
+    /// is `pub(crate)` plumbing rather than a `DecryptContext` variant).
+    ivbuf: crate::crypto::cipher_env::IvSplitBuffer,
     cipher_iv: Vec<u8>,
     first_encrypt: bool,
     addr_pkg: Vec<u8>,
@@ -218,6 +222,10 @@ where
         // (C ssr_executive.c:400 sets server_info.iv = enc_ctx_get_iv()).
         protocol.set_server_iv(iv.clone());
 
+        // GOAL 1.2: first-packet IV assembly buffer (iv_len is fixed for the
+        // connection's method; capture it before `cipher_env` moves in).
+        let ivbuf = crate::crypto::cipher_env::IvSplitBuffer::new(cipher_env.iv_len());
+
         Ok(Self {
             local_read,
             local_write,
@@ -228,6 +236,7 @@ where
             protocol,
             encrypt_ctx,
             decrypt_ctx: None,
+            ivbuf,
             cipher_iv: iv,
             first_encrypt: true,
             addr_pkg,
@@ -346,15 +355,13 @@ where
                         let (decrypted_obfs, _needs_feedback) =
                             self.obfs.client_decode(&remote_buf[..n])?;
                         if !decrypted_obfs.is_empty() {
-                            let decrypted_cipher = if let Some(ref mut dctx) = self.decrypt_ctx {
-                                self.cipher_env.decrypt_ctx(dctx, &decrypted_obfs)?
-                            } else {
-                                let (dctx, data) = self
-                                    .cipher_env
-                                    .create_decrypt_ctx_from_ciphertext(&decrypted_obfs)?;
-                                let dctx_slot = self.decrypt_ctx.insert(dctx);
-                                self.cipher_env.decrypt_ctx(dctx_slot, &data)?
-                            };
+                            // GOAL 1.2: one entry point for first-packet IV
+                            // assembly + streaming decrypt.
+                            let decrypted_cipher = self.ivbuf.push(
+                                &self.cipher_env,
+                                &mut self.decrypt_ctx,
+                                &decrypted_obfs,
+                            )?;
                             let decoded = self.protocol.client_post_decrypt(&decrypted_cipher)?;
                             if !decoded.is_empty() {
                                 self.local_write.write_all(&decoded).await?;
@@ -396,13 +403,12 @@ where
                                     Ok(n) => {
                                         let (decrypted_obfs, _) = self.obfs.client_decode(&remote_buf[..n])?;
                                         if !decrypted_obfs.is_empty() {
-                                            let decrypted_cipher = if let Some(ref mut dctx) = self.decrypt_ctx {
-                                                self.cipher_env.decrypt_ctx(dctx, &decrypted_obfs)?
-                                            } else {
-                                                let (dctx, data) = self.cipher_env.create_decrypt_ctx_from_ciphertext(&decrypted_obfs)?;
-                                                let dctx_slot = self.decrypt_ctx.insert(dctx);
-                                                self.cipher_env.decrypt_ctx(dctx_slot, &data)?
-                                            };
+                                            // GOAL 1.2: IV assembly + decrypt
+                                            let decrypted_cipher = self.ivbuf.push(
+                                                &self.cipher_env,
+                                                &mut self.decrypt_ctx,
+                                                &decrypted_obfs,
+                                            )?;
                                             let decoded = self.protocol.client_post_decrypt(&decrypted_cipher)?;
                                             if !decoded.is_empty() {
                                                 self.local_write.write_all(&decoded).await?;
@@ -452,15 +458,14 @@ where
                                 continue;
                             }
                             // Stateful cipher: decrypt with stream state
-                            let decrypted_cipher = if let Some(ref mut dctx) = self.decrypt_ctx {
-                                // Subsequent messages: no IV prefix, use existing state
-                                self.cipher_env.decrypt_ctx(dctx, &decrypted_obfs)?
-                            } else {
-                                // First message: read IV from ciphertext, create context
-                                let (dctx, data) = self.cipher_env.create_decrypt_ctx_from_ciphertext(&decrypted_obfs)?;
-                                let dctx_slot = self.decrypt_ctx.insert(dctx);
-                                self.cipher_env.decrypt_ctx(dctx_slot, &data)?
-                            };
+                            // GOAL 1.2: IV assembly + streaming decrypt (first
+                            // packet may arrive with a split IV; later chunks
+                            // stream straight through inside push()).
+                            let decrypted_cipher = self.ivbuf.push(
+                                &self.cipher_env,
+                                &mut self.decrypt_ctx,
+                                &decrypted_obfs,
+                            )?;
                             ssr_debug!("[relay] Decrypted: {} bytes", decrypted_cipher.len());
                             // Protocol: unwrap framing
                             let decoded = self.protocol.client_post_decrypt(&decrypted_cipher)?;
