@@ -1,0 +1,295 @@
+src/config_json.rs:pub enum Json {
+src/config_json.rs:    pub fn as_bool(&self) -> Option<bool> {
+src/config_json.rs:    pub fn as_str(&self) -> Option<&str> {
+src/config_json.rs:    pub fn as_u16(&self) -> Option<u16> {
+src/config_json.rs:    pub fn as_u32(&self) -> Option<u32> {
+src/config_json.rs:pub fn config_from_json(text: &str) -> Result<SsrClientConfig, String> {
+src/config_json.rs:    pub fn get(&self, key: &str) -> Option<&Json> {
+src/config_json.rs:pub fn parse_json(text: &str) -> Result<Json, String> {
+src/config.rs:    pub connect_timeout: u32,
+src/config.rs:    pub idle_timeout: u32,
+src/config.rs:    pub listen_address: String,
+src/config.rs:    pub listen_port: u16,
+src/config.rs:    pub method: CipherType,
+src/config.rs:    pub obfs: ObfsType,
+src/config.rs:    pub obfs_param: String,
+src/config.rs:    pub password: String,
+src/config.rs:    pub protocol_param: String,
+src/config.rs:    pub protocol: ProtocolType,
+src/config.rs:    pub server_port: u16,
+src/config.rs:    pub server: String,
+src/config.rs:pub struct SsrClientConfig {
+src/config.rs:    pub udp: bool,
+src/config.rs:    pub udp_timeout: u32,
+src/crypto/aead.rs:pub const CHUNK_SIZE_LEN: usize = 2;
+src/crypto/aead.rs:pub const CHUNK_SIZE_MASK: usize = 0x3FFF;
+src/crypto/aead.rs:pub const TAG_LEN: usize = 16;
+src/crypto/aead.rs:pub enum AeadCipher {
+src/crypto/aead.rs:    pub fn decrypt(&mut self, ciphertext: &[u8]) -> SsrResult<Vec<u8>> {
+src/crypto/aead.rs:    pub fn encrypt(&mut self, plaintext: &[u8]) -> SsrResult<Vec<u8>> {
+src/crypto/aead.rs:pub fn hkdf_sha1(salt: &[u8], ikm: &[u8], info: &[u8], okm_len: usize) -> Vec<u8> {
+src/crypto/aead.rs:    pub fn is_aead(method: CipherType) -> bool {
+src/crypto/aead.rs:    pub fn key_len_of(method: CipherType) -> Option<usize> {
+src/crypto/aead.rs:    pub fn new_from_salt(method: CipherType, master_key: &[u8], salt: &[u8]) -> SsrResult<Self> {
+src/crypto/aead.rs:    pub fn new(method: CipherType, key: &[u8]) -> SsrResult<Self> {
+src/crypto/aead.rs:    pub fn new(method: CipherType, master_key: &[u8]) -> SsrResult<Self> {
+src/crypto/aead.rs:    pub fn new(method: CipherType, master_key: &[u8]) -> SsrResult<Self> {
+src/crypto/aead.rs:    pub fn nonce_len_of(method: CipherType) -> Option<usize> {
+src/crypto/aead.rs:    pub fn open(&self, nonce: &[u8], ciphertext: &[u8]) -> SsrResult<Vec<u8>> {
+src/crypto/aead.rs:    pub fn salt(&self) -> &[u8] {
+src/crypto/aead.rs:    pub fn seal(&self, nonce: &[u8], plaintext: &[u8]) -> SsrResult<Vec<u8>> {
+src/crypto/aead.rs:pub struct AeadDecryptCtx {
+src/crypto/aead.rs:pub struct AeadEncryptCtx {
+src/crypto/bytes_to_key.rs:pub fn bytes_to_key(password: &[u8], key_len: usize) -> Vec<u8> {
+src/crypto/bytes_to_key.rs:pub fn bytes_to_key_with_size(password: &[u8], md_size: usize) -> Vec<u8> {
+src/crypto/cipher_env.rs:pub enum DecryptContext {
+src/crypto/cipher_env.rs:pub enum EncryptContext {
+src/crypto/cipher_env.rs:    pub fn check_iv(&mut self, iv: &[u8]) -> bool {
+src/crypto/cipher_env.rs:    pub fn create_decrypt_ctx_from_ciphertext(
+src/crypto/cipher_env.rs:    pub fn create_encrypt_ctx(&self) -> SsrResult<(EncryptContext, Vec<u8>)> {
+src/crypto/cipher_env.rs:    pub fn decrypt_ctx(&self, ctx: &mut DecryptContext, ciphertext: &[u8]) -> SsrResult<Vec<u8>> {
+src/crypto/cipher_env.rs:    pub fn decrypt(&self, ciphertext: &[u8]) -> SsrResult<Vec<u8>> {
+src/crypto/cipher_env.rs:    pub fn decrypt_udp(&self, ciphertext: &[u8]) -> SsrResult<Vec<u8>> {
+src/crypto/cipher_env.rs:    pub fn encrypt_ctx(
+src/crypto/cipher_env.rs:    pub fn encrypt(&self, plaintext: &[u8]) -> SsrResult<Vec<u8>> {
+src/crypto/cipher_env.rs:    pub fn encrypt_udp(&self, plaintext: &[u8]) -> SsrResult<Vec<u8>> {
+src/crypto/cipher_env.rs:    pub fn iv_len(&self) -> usize {
+src/crypto/cipher_env.rs:    pub fn key(&self) -> &[u8] {
+src/crypto/cipher_env.rs:    pub fn method(&self) -> CipherType {
+src/crypto/cipher_env.rs:    pub fn new(password: &str, method_name: &str) -> SsrResult<Self> {
+src/crypto/cipher_env.rs:    pub fn with_method(password: &str, method: CipherType) -> SsrResult<Self> {
+src/crypto/cipher_env.rs:pub struct CipherEnv {
+src/crypto/mod.rs:pub mod aead;
+src/crypto/mod.rs:pub mod bytes_to_key;
+src/crypto/mod.rs:pub mod cipher_env;
+src/crypto/mod.rs:pub mod stream;
+src/crypto/mod.rs:pub mod table;
+src/crypto/mod.rs:pub mod types;
+src/crypto/mod.rs:pub use types::{CipherType, ObfsType, ProtocolType, TargetAddr};
+src/crypto/stream.rs:pub fn stream_decrypt(
+src/crypto/stream.rs:pub fn stream_encrypt(
+src/crypto/table.rs:    pub fn decrypt(&self, data: &[u8]) -> Vec<u8> {
+src/crypto/table.rs:    pub fn encrypt(&self, data: &[u8]) -> Vec<u8> {
+src/crypto/table.rs:    pub fn new(password: &[u8]) -> Self {
+src/crypto/table.rs:pub struct TableCipher {
+src/crypto/types.rs:pub enum CipherType {
+src/crypto/types.rs:pub enum ObfsType {
+src/crypto/types.rs:pub enum ProtocolType {
+src/crypto/types.rs:pub enum TargetAddr {
+src/crypto/types.rs:    pub fn addr_bytes(&self) -> Vec<u8> {
+src/crypto/types.rs:    pub fn atyp(&self) -> u8 {
+src/crypto/types.rs:    pub fn from_name(name: &str) -> SsrResult<Self> {
+src/crypto/types.rs:    pub fn from_name(name: &str) -> SsrResult<Self> {
+src/crypto/types.rs:    pub fn from_name(name: &str) -> SsrResult<Self> {
+src/crypto/types.rs:    pub fn from_socks5(atyp: u8, addr: &[u8], port: u16) -> SsrResult<Self> {
+src/crypto/types.rs:    pub fn is_aead(&self) -> bool {
+src/crypto/types.rs:    pub fn iv_size(&self) -> usize {
+src/crypto/types.rs:    pub fn key_size(&self) -> usize {
+src/crypto/types.rs:    pub fn name(&self) -> &'static str {
+src/crypto/types.rs:    pub fn name(&self) -> &'static str {
+src/crypto/types.rs:    pub fn name(&self) -> &'static str {
+src/crypto/types.rs:    pub fn need_iv(&self) -> bool {
+src/crypto/types.rs:    pub fn nonce_size(&self) -> usize {
+src/crypto/types.rs:    pub fn port(&self) -> u16 {
+src/crypto/types.rs:    pub fn tag_size(&self) -> usize {
+src/crypto/types.rs:    pub fn to_socket_addr(&self) -> Option<std::net::SocketAddr> {
+src/error.rs:pub enum SsrError {
+src/error.rs:    pub fn connection(msg: impl Into<String>) -> Self {
+src/error.rs:    pub fn crypto(msg: impl Into<String>) -> Self {
+src/error.rs:    pub fn invalid_argument(msg: impl Into<String>) -> Self {
+src/error.rs:    pub fn other(msg: impl Into<String>) -> Self {
+src/error.rs:    pub fn protocol(msg: impl Into<String>) -> Self {
+src/error.rs:    pub fn socks5(msg: impl Into<String>) -> Self {
+src/error.rs:pub type SsrResult<T> = Result<T, SsrError>;
+src/lib.rs:pub mod config;
+src/lib.rs:pub mod config_json;
+src/lib.rs:pub mod crypto;
+src/lib.rs:pub mod error;
+src/lib.rs:pub mod local;
+src/lib.rs:pub mod log;
+src/lib.rs:pub mod obfs;
+src/lib.rs:pub mod protocol;
+src/lib.rs:pub mod relay;
+src/lib.rs:pub mod socks5;
+src/lib.rs:pub mod utils;
+src/lib.rs:pub use config::SsrClientConfig;
+src/lib.rs:pub use crypto::{CipherType, ObfsType, ProtocolType, TargetAddr};
+src/lib.rs:pub use error::{SsrError, SsrResult};
+src/lib.rs:pub use local::{SsrClient, SsrSession};
+src/lib.rs:pub use relay::TcpRelay;
+src/lib.rs:pub use socks5::{
+src/local/mod.rs:    pub async fn finish(mut self) -> SsrResult<()> {
+src/local/mod.rs:    pub async fn open_session(&self, target: crate::crypto::TargetAddr) -> SsrResult<SsrSession> {
+src/local/mod.rs:    pub async fn start(&self) -> SsrResult<()> {
+src/local/mod.rs:    pub fn config(&self) -> &SsrClientConfig {
+src/local/mod.rs:    pub fn is_running(&self) -> bool {
+src/local/mod.rs:    pub fn new(config: SsrClientConfig) -> Self {
+src/local/mod.rs:    pub fn stop(&self) {
+src/local/mod.rs:pub mod udp_relay;
+src/local/mod.rs:pub struct SsrClient {
+src/local/mod.rs:pub struct SsrSession {
+src/local/udp_relay.rs:    pub async fn bind(config: SsrClientConfig) -> SsrResult<Self> {
+src/local/udp_relay.rs:    pub fn spawn(self, mut shutdown: tokio::sync::watch::Receiver<bool>) {
+src/local/udp_relay.rs:pub struct UdpRelay {
+src/log.rs:pub fn debug_enabled() -> bool {
+src/obfs/http_simple.rs:    pub fn new(server_host: String, server_port: u16, extra_param: String) -> Self {
+src/obfs/http_simple.rs:    pub fn new(server_host: String, server_port: u16, extra_param: String) -> Self {
+src/obfs/http_simple.rs:    pub fn new(server_host: String, server_port: u16, extra_param: String) -> Self {
+src/obfs/http_simple.rs:pub struct HttpMixObfs {
+src/obfs/http_simple.rs:pub struct HttpPostObfs {
+src/obfs/http_simple.rs:pub struct HttpSimpleObfs {
+src/obfs/mod.rs:pub fn create_obfs(
+src/obfs/mod.rs:pub mod http_simple;
+src/obfs/mod.rs:pub mod plain;
+src/obfs/mod.rs:pub mod tls_ticket;
+src/obfs/mod.rs:pub trait Obfs: Send {
+src/obfs/plain.rs:    pub fn new() -> Self {
+src/obfs/plain.rs:pub struct PlainObfs;
+src/obfs/tls_ticket.rs:    pub fn get_client_id(&self) -> &[u8; 32] {
+src/obfs/tls_ticket.rs:    pub fn new(
+src/obfs/tls_ticket.rs:    pub fn set_key(&mut self, key: Vec<u8>) {
+src/obfs/tls_ticket.rs:pub struct Tls12TicketAuthObfs {
+src/protocol/auth_aes128.rs:pub fn aes_128_cbc_decrypt(key: &[u8], data: &[u8]) -> SsrResult<Vec<u8>> {
+src/protocol/auth_aes128.rs:    pub fn init_user_key(&mut self) {
+src/protocol/auth_aes128.rs:    pub fn new_md5(server_info: ServerInfo) -> Self {
+src/protocol/auth_aes128.rs:    pub fn new_sha1(server_info: ServerInfo) -> Self {
+src/protocol/auth_aes128.rs:    pub fn set_server_iv(&mut self, iv: Vec<u8>) {
+src/protocol/auth_aes128.rs:pub struct AuthAES128 {
+src/protocol/auth_chain.rs:    pub fn new(server_info: ServerInfo, extra_param: &str) -> Self {
+src/protocol/auth_chain.rs:    pub fn new(server_info: ServerInfo, salt: &'static str) -> Self {
+src/protocol/auth_chain.rs:    pub fn new(server_info: ServerInfo) -> Self {
+src/protocol/auth_chain.rs:    pub fn new(server_info: ServerInfo) -> Self {
+src/protocol/auth_chain.rs:    pub fn new(server_info: ServerInfo) -> Self {
+src/protocol/auth_chain.rs:    pub fn new(server_info: ServerInfo) -> Self {
+src/protocol/auth_chain.rs:    pub fn next_u64(&mut self) -> u64 {
+src/protocol/auth_chain.rs:pub struct AuthChainA {
+src/protocol/auth_chain.rs:pub struct AuthChainB {
+src/protocol/auth_chain.rs:pub struct AuthChainC {
+src/protocol/auth_chain.rs:pub struct AuthChainD {
+src/protocol/auth_chain.rs:pub struct AuthChainE {
+src/protocol/auth_chain.rs:pub struct AuthChainF {
+src/protocol/auth_sha1.rs:    pub fn new(server_info: ServerInfo) -> Self {
+src/protocol/auth_sha1.rs:pub struct AuthSHA1 {
+src/protocol/auth_sha1_v2.rs:    pub fn new(server_info: ServerInfo) -> Self {
+src/protocol/auth_sha1_v2.rs:pub struct AuthSHA1V2 {
+src/protocol/auth_sha1_v4.rs:    pub fn new(server_info: ServerInfo) -> Self {
+src/protocol/auth_sha1_v4.rs:pub struct AuthSHA1V4 {
+src/protocol/auth_simple.rs:    pub fn new() -> Self {
+src/protocol/auth_simple.rs:pub struct AuthSimple {
+src/protocol/mod.rs:    pub buffer_size: u32,
+src/protocol/mod.rs:    pub connection_id: u32,
+src/protocol/mod.rs:    pub extra_param: String,
+src/protocol/mod.rs:    pub fn from_bin_with_datalen(data: &[u8], datalen: usize) -> Self {
+src/protocol/mod.rs:    pub fn from_bytes(data: &[u8]) -> Self {
+src/protocol/mod.rs:pub fn get_s5_head_size(plaindata: &[u8], def_size: usize) -> usize {
+src/protocol/mod.rs:    pub fn increment(&mut self) {
+src/protocol/mod.rs:pub fn memintcopy_lt(buf: &mut [u8], val: u32) {
+src/protocol/mod.rs:pub fn memintread_lt(buf: &[u8]) -> u32 {
+src/protocol/mod.rs:    pub fn new(seed: u64) -> Self {
+src/protocol/mod.rs:    pub fn new() -> Self {
+src/protocol/mod.rs:    pub fn next_u64(&mut self) -> u64 {
+src/protocol/mod.rs:pub fn ss_hmac_key(iv: &[u8], key: &[u8]) -> Vec<u8> {
+src/protocol/mod.rs:    pub head_len: usize,
+src/protocol/mod.rs:    pub host: String,
+src/protocol/mod.rs:    pub iv: Vec<u8>,
+src/protocol/mod.rs:    pub key: Vec<u8>,
+src/protocol/mod.rs:    pub local_client_id: [u8; 8],
+src/protocol/mod.rs:pub mod auth_aes128;
+src/protocol/mod.rs:pub mod auth_chain;
+src/protocol/mod.rs:pub mod auth_sha1;
+src/protocol/mod.rs:pub mod auth_sha1_v2;
+src/protocol/mod.rs:pub mod auth_sha1_v4;
+src/protocol/mod.rs:pub mod auth_simple;
+src/protocol/mod.rs:pub mod origin;
+src/protocol/mod.rs:pub mod verify_simple;
+src/protocol/mod.rs:    pub overhead: u16,
+src/protocol/mod.rs:    pub port: u16,
+src/protocol/mod.rs:    pub recv_iv: Vec<u8>,
+src/protocol/mod.rs:pub struct GlobalData {
+src/protocol/mod.rs:pub struct ServerInfo {
+src/protocol/mod.rs:pub struct XorShift128Plus {
+src/protocol/mod.rs:    pub tcp_mss: u16,
+src/protocol/mod.rs:pub trait Protocol: Send {
+src/protocol/origin.rs:pub struct Origin;
+src/protocol/verify_simple.rs:    pub fn new() -> Self {
+src/protocol/verify_simple.rs:pub struct VerifySimple {
+src/relay/mod.rs:pub async fn relay_streams(
+src/relay/mod.rs:    pub async fn run(self) -> SsrResult<(u64, u64)> {
+src/relay/mod.rs:    pub fn new(local: TcpStream, remote: TcpStream) -> Self {
+src/relay/mod.rs:    pub fn with_buffer_size(local: TcpStream, remote: TcpStream, buffer_size: usize) -> Self {
+src/relay/mod.rs:pub struct TcpRelay {
+src/socks5/mod.rs:    pub addr: TargetAddress,
+src/socks5/mod.rs:    pub addr: TargetAddress,
+src/socks5/mod.rs:    pub cmd: u8,
+src/socks5/mod.rs:pub const ATYP_DOMAIN: u8 = 0x03;
+src/socks5/mod.rs:pub const ATYP_IPV4: u8 = 0x01;
+src/socks5/mod.rs:pub const ATYP_IPV6: u8 = 0x04;
+src/socks5/mod.rs:pub const AUTH_NONE: u8 = 0x00;
+src/socks5/mod.rs:pub const AUTH_REQUIRED: u8 = 0xFF;
+src/socks5/mod.rs:pub const CMD_BIND: u8 = 0x02;
+src/socks5/mod.rs:pub const CMD_CONNECT: u8 = 0x01;
+src/socks5/mod.rs:pub const CMD_UDP_ASSOCIATE: u8 = 0x03;
+src/socks5/mod.rs:pub const REP_ADDRESS_TYPE_NOT_SUPPORTED: u8 = 0x08;
+src/socks5/mod.rs:pub const REP_COMMAND_NOT_SUPPORTED: u8 = 0x07;
+src/socks5/mod.rs:pub const REP_CONNECTION_REFUSED: u8 = 0x05;
+src/socks5/mod.rs:pub const REP_GENERAL_FAILURE: u8 = 0x01;
+src/socks5/mod.rs:pub const REP_HOST_UNREACHABLE: u8 = 0x04;
+src/socks5/mod.rs:pub const REP_NETWORK_UNREACHABLE: u8 = 0x03;
+src/socks5/mod.rs:pub const REP_NOT_ALLOWED: u8 = 0x02;
+src/socks5/mod.rs:pub const REP_SUCCESS: u8 = 0x00;
+src/socks5/mod.rs:pub enum TargetAddress {
+src/socks5/mod.rs:    pub fn atyp(&self) -> u8 {
+src/socks5/mod.rs:pub fn build_address_package(addr: &TargetAddress, port: u16) -> Vec<u8> {
+src/socks5/mod.rs:pub fn build_connect_reply(rep: u8, atyp: u8, bind_addr: &[u8], bind_port: u16) -> Vec<u8> {
+src/socks5/mod.rs:pub fn build_method_response(method: u8) -> [u8; 2] {
+src/socks5/mod.rs:pub fn build_success_reply(atyp: u8) -> Vec<u8> {
+src/socks5/mod.rs:pub fn build_udp_datagram(addr: &TargetAddress, port: u16, payload: &[u8]) -> Vec<u8> {
+src/socks5/mod.rs:    pub fn display(&self) -> String {
+src/socks5/mod.rs:    pub fn encode(&self) -> Vec<u8> {
+src/socks5/mod.rs:pub fn parse_connect_request(data: &[u8]) -> SsrResult<ConnectRequest> {
+src/socks5/mod.rs:pub fn parse_method_negotiation(data: &[u8]) -> SsrResult<MethodNegotiation> {
+src/socks5/mod.rs:pub fn parse_udp_datagram(data: &[u8]) -> SsrResult<UdpDatagram> {
+src/socks5/mod.rs:pub fn take_bytes(data: &[u8], n: usize) -> SsrResult<(&[u8], &[u8])> {
+src/socks5/mod.rs:    pub frag: u8,
+src/socks5/mod.rs:    pub header_len: usize,
+src/socks5/mod.rs:    pub methods: Vec<u8>,
+src/socks5/mod.rs:    pub payload: Vec<u8>,
+src/socks5/mod.rs:    pub port: u16,
+src/socks5/mod.rs:    pub port: u16,
+src/socks5/mod.rs:    pub rsv: u8,
+src/socks5/mod.rs:pub struct ConnectRequest {
+src/socks5/mod.rs:pub struct MethodNegotiation {
+src/socks5/mod.rs:pub struct UdpDatagram {
+src/socks5/mod.rs:    pub version: u8,
+src/socks5/mod.rs:    pub version: u8,
+src/utils/adler32.rs:pub fn adler32(data: &[u8]) -> u32 {
+src/utils/adler32.rs:pub fn check_adler32(buffer: &[u8]) -> bool {
+src/utils/adler32.rs:pub fn fill_adler32(buffer: &mut [u8], total_size: usize) {
+src/utils/base64.rs:pub fn b64decode(data: &str) -> Result<Vec<u8>, base64::DecodeError> {
+src/utils/base64.rs:pub fn b64decode_url(data: &str) -> Result<Vec<u8>, base64::DecodeError> {
+src/utils/base64.rs:pub fn b64encode(data: &[u8]) -> String {
+src/utils/base64.rs:pub fn b64encode_url(data: &[u8]) -> String {
+src/utils/crc32.rs:pub fn check_crc32(buffer: &[u8]) -> bool {
+src/utils/crc32.rs:pub fn crc32_bytes(data: &[u8]) -> [u8; 4] {
+src/utils/crc32.rs:pub fn crc32(data: &[u8]) -> u32 {
+src/utils/crc32.rs:pub fn fill_crc32(buffer: &mut [u8], total_size: usize) {
+src/utils/crc32.rs:pub fn fill_crc32_to(data: &[u8], outbuffer: &mut [u8]) {
+src/utils/hash.rs:pub fn hmac_md5(key: &[u8], data: &[u8]) -> [u8; 16] {
+src/utils/hash.rs:pub fn hmac_md5_multi(key: &[u8], data: &[&[u8]]) -> [u8; 16] {
+src/utils/hash.rs:pub fn hmac_sha1(key: &[u8], data: &[u8]) -> [u8; 20] {
+src/utils/hash.rs:pub fn hmac_sha1_multi(key: &[u8], data: &[&[u8]]) -> [u8; 20] {
+src/utils/hash.rs:pub fn md5(data: &[u8]) -> [u8; 16] {
+src/utils/hash.rs:pub fn md5_multi(data: &[&[u8]]) -> [u8; 16] {
+src/utils/hash.rs:pub fn sha1(data: &[u8]) -> [u8; 20] {
+src/utils/mod.rs:pub mod adler32;
+src/utils/mod.rs:pub mod base64;
+src/utils/mod.rs:pub mod crc32;
+src/utils/mod.rs:pub mod hash;
+src/utils/mod.rs:pub mod sockaddr;
+src/utils/sockaddr.rs:pub enum SockAddr {
+src/utils/sockaddr.rs:    pub fn from_host_port(host: &str, port: u16) -> Option<Self> {
+src/utils/sockaddr.rs:    pub fn from_socket_addr(addr: SocketAddr) -> Self {
+src/utils/sockaddr.rs:pub fn host_port(host: &str, port: u16) -> String {
+src/utils/sockaddr.rs:    pub fn port(&self) -> u16 {
+src/utils/sockaddr.rs:    pub fn resolve(host: &str, port: u16) -> Option<SocketAddr> {
+src/utils/sockaddr.rs:    pub fn to_socket_addr(&self) -> SocketAddr {

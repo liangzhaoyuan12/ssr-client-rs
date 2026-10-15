@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
 """GOALS T4: e2e matrix — local ssr-server + our client, purely local target.
 
-Combination strategy (GOALS T4, three axes + UDP):
+Combination strategy (GOALS T4, three axes + UDP; GOAL 0.5 adds combo):
   cipher  : every implemented cipher x origin  + plain   (21, unimplemented -> SKIP)
   protocol: aes-256-cfb        x <protocol>    + plain   (14; chain_f uses aes-128-cfb)
   obfs    : aes-256-cfb        x auth_aes128_sha1 + <obfs> (6)
+  combo   : 3 ciphers x 3 protocols x 3 obfs pairwise (27) + 1 AEAD representative
   udp     : delegated to tools/e2e_udp.sh --all          (3)
 
 Usage:
   python3 tools/matrix_test.py            # all axes
   python3 tools/matrix_test.py --ref-c    # C client as control
   python3 tools/matrix_test.py --axis protocol
+  python3 tools/matrix_test.py --axis combo
 
 Outputs:
-  tests/e2e/RESULTS.md           markdown table, dated, with server binary hash
-  tests/e2e/matrix_results.json  machine-readable dump
+  tests/e2e/RESULTS.md           markdown table for --axis all, dated, with server hash
+  tests/e2e/RESULTS_<axis>.md    per-axis output for a single-axis run (keeps the
+                                 full table intact)
+  tests/e2e/matrix_results*.json machine-readable dump
 
 Requires: /opt/ssr/ssr-server and a built client (release preferred, else debug).
 """
@@ -89,6 +93,12 @@ PROTOCOL_SKIP = {
     "auth_sha1": "server has no server_post_decrypt (C client fails too)",
     "auth_sha1_v2": "server has no server_post_decrypt (C client fails too)",
 }
+# GOAL 0.5 combo axis: cross-product of the three wire layers. Kept small on
+# purpose (pairwise-ish coverage of layer interactions the single axes never
+# touch, e.g. table substitution UNDER auth_chain framing UNDER an HTTP obfs).
+COMBO_METHODS = ["none", "table", "aes-256-cfb"]
+COMBO_PROTOCOLS = ["origin", "auth_aes128_sha1", "auth_chain_a"]
+COMBO_OBFS = ["plain", "http_simple", "tls1.2_ticket_auth"]
 
 _pids = []
 # The local HTTP target must OUTLIVE per-case kill_tracked(); track it apart.
@@ -286,6 +296,15 @@ def build_cases(axis):
     if axis in ("all", "obfs"):
         for o in OBFS_LIST:
             cases.append(("obfs", "aes-256-cfb", "auth_aes128_sha1", o, ""))
+    if axis in ("all", "combo"):
+        for m in COMBO_METHODS:
+            for p in COMBO_PROTOCOLS:
+                for o in COMBO_OBFS:
+                    cases.append(("combo", m, p, o, ""))
+        # One AEAD representative: the client downgrades AEAD to origin+plain,
+        # so a full AEAD x protocol x obfs product would be 9 identical shapes.
+        cases.append(("combo", "aes-256-gcm", "origin", "plain",
+                      "AEAD representative (client downgrades to origin+plain)"))
     return cases
 
 
@@ -345,7 +364,7 @@ def main():
     ap.add_argument("--ref-c", action="store_true",
                     help="run the C client as control")
     ap.add_argument("--axis", default="all",
-                    choices=["all", "cipher", "protocol", "obfs", "udp"])
+                    choices=["all", "cipher", "protocol", "obfs", "combo", "udp"])
     args = ap.parse_args()
 
     client_bin = C_CLIENT if args.ref_c else RUST_CLIENT
@@ -399,8 +418,14 @@ def main():
 
     out_dir = os.path.join(REPO, "tests", "e2e")
     os.makedirs(out_dir, exist_ok=True)
-    md_path = os.path.join(out_dir, "RESULTS.md")
-    json_path = os.path.join(out_dir, "matrix_results.json")
+    # --axis all owns RESULTS.md; a single-axis run must not overwrite the
+    # full table (it is the baseline artifact GOAL 6.8 diffs against), and a
+    # --ref-c control run must not clobber the RUST result for the same axis.
+    suffix = "" if args.axis == "all" else f"_{args.axis}"
+    if args.ref_c:
+        suffix += "_cref"
+    md_path = os.path.join(out_dir, f"RESULTS{suffix}.md")
+    json_path = os.path.join(out_dir, f"matrix_results{suffix}.json")
     write_results_md(results, tag, skipped, md_path)
     with open(json_path, "w") as fh:
         json.dump({"client": tag, "server_sha12": server_hash(),
