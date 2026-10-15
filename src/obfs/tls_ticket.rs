@@ -58,13 +58,12 @@ fn pack_auth_data(key: &[u8], client_id: &[u8]) -> [u8; 32] {
     outdata
 }
 
-/// Pack data into TLS record: \x17\x03\x03 + 2-byte length + data
-fn pack_data(data: &[u8]) -> Vec<u8> {
-    let mut result = Vec::with_capacity(5 + data.len());
-    result.extend_from_slice(&[0x17, 0x03, 0x03]);
-    result.extend_from_slice(&(data.len() as u16).to_be_bytes());
-    result.extend_from_slice(data);
-    result
+/// GOAL 4.3: append a TLS record (\x17\x03\x03 + 2-byte length + data)
+/// directly into `out` — no intermediate Vec.
+fn pack_data_into(out: &mut Vec<u8>, data: &[u8]) {
+    out.extend_from_slice(&[0x17, 0x03, 0x03]);
+    out.extend_from_slice(&(data.len() as u16).to_be_bytes());
+    out.extend_from_slice(data);
 }
 
 /// TLS 1.2 ticket auth obfuscation
@@ -256,22 +255,25 @@ impl Obfs for Tls12TicketAuthObfs {
 
         let mut result = Vec::new();
 
-        // After Finish sent (bit 2 set): wrap data in TLS Application Data records
+        // After Finish sent (bit 2 set): wrap data in TLS Application Data records.
+        // GOAL 4.3: records are written straight into the output buffer (one
+        // allocation per packet total; was one per record fragment on top).
         if (self.handshake_status & 0x04) != 0 {
+            result.reserve(8 + buf.len());
             let mut start = 0;
             while self.send_id <= 4 && buf.len() - start > 256 {
                 let len = (rand::random::<usize>() % 512 + 64).min(buf.len() - start);
-                result.extend_from_slice(&pack_data(&buf[start..start + len]));
+                pack_data_into(&mut result, &buf[start..start + len]);
                 start += len;
                 self.send_id += 1;
             }
             while buf.len() - start > 2048 {
                 let len = (rand::random::<usize>() % 4096 + 100).min(buf.len() - start);
-                result.extend_from_slice(&pack_data(&buf[start..start + len]));
+                pack_data_into(&mut result, &buf[start..start + len]);
                 start += len;
             }
             if start < buf.len() {
-                result.extend_from_slice(&pack_data(&buf[start..]));
+                pack_data_into(&mut result, &buf[start..]);
             }
             return Ok(result);
         }
@@ -293,7 +295,7 @@ impl Obfs for Tls12TicketAuthObfs {
                 result.extend_from_slice(&client_hello);
                 result.extend_from_slice(&finish);
                 for data in self.send_buffer.drain(..) {
-                    result.extend_from_slice(&pack_data(&data));
+                    pack_data_into(&mut result, &data);
                 }
                 self.handshake_status |= 0x04;
                 return Ok(result);
@@ -309,7 +311,7 @@ impl Obfs for Tls12TicketAuthObfs {
             self.handshake_status |= 0x02;
             result.extend_from_slice(&finish);
             for data in self.send_buffer.drain(..) {
-                result.extend_from_slice(&pack_data(&data));
+                pack_data_into(&mut result, &data);
             }
             self.handshake_status |= 0x04;
             return Ok(result);
@@ -491,7 +493,8 @@ mod tests {
     #[test]
     fn test_pack_data() {
         let data = b"hello";
-        let packed = pack_data(data);
+        let mut packed = Vec::new();
+        pack_data_into(&mut packed, data);
         assert_eq!(packed[0], 0x17); // Application data
         assert_eq!(packed[1], 0x03);
         assert_eq!(packed[2], 0x03);

@@ -225,3 +225,21 @@ tracks key length).
 (cipher ctx) + 0.14–14.8 µs (protocol first packet) + 0.15–4.6 µs (obfs
 handshake) ≈ **tens of µs of CPU** — invisible next to one network RTT;
 connection setup is network-bound, not compute-bound.
+
+## 4. P2 end-to-end vs C client (2026-10-16)
+
+| field | value |
+|---|---|
+| config | aes-256-cfb / auth_aes128_sha1 / tls1.2_ticket_auth, loopback |
+| payload | 64 MiB random file x 1 runs, median |
+| server | /opt/ssr/ssr-server (d70342262c45) |
+| C client | /opt/ssr/ssr-client (988974dcdfa5) |
+| Rust client | /home/liangzhaoyuan12/work/rs/ssr-client-rs/target/release/ssr_client (1c40e951a074) |
+
+| client | throughput MiB/s | median wall s | CPU % |
+|---|---|---|---|
+| C | 14.5 | 4.427377 | 99.4 |
+| Rust | 14.9 | 4.288517 | 80.2 |
+
+**Result**: throughput rust/C = 102.8% (target >= 90%),
+CPU rust/C = 0.81x (target <= 1.5x) — throughput rust/C=102.76% (PASS, need >=90%)  cpu rust/C=0.81x (PASS, need <=1.5x)

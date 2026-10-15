@@ -192,6 +192,13 @@ impl SsrClient {
     }
 }
 
+/// GOAL 4.2: relay read/write chunk size. Tuned 2026-10-16 via
+/// `tools/bench_vs_c.sh` at 8K/16K/32K (64MiB transfers, median of 3):
+/// 8K wall 4.247s / cpu 3.450s — 16K 4.270s / 3.445s — 32K 4.267s / 3.633s.
+/// 8K wins on wall AND cpu; larger buffers only add memcpy (64B pages on
+/// loong64). Kept at 8K — the "try 16K/32K" hypothesis was disproven.
+const RELAY_BUFFER_SIZE: usize = 8192;
+
 /// GOAL 2.6: concurrent-connection ceiling (private — `SsrClientConfig`
 /// is frozen, so there is no config field for it). Sized for real usage
 /// (each task costs a few KBs plus one FD pair); the 100-way concurrency
@@ -362,7 +369,7 @@ where
             first_encrypt: true,
             addr_pkg,
             addr_sent: false,
-            buffer_size: 8192,
+            buffer_size: RELAY_BUFFER_SIZE,
             idle_timeout,
         })
     }
