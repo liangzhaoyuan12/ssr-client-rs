@@ -102,6 +102,9 @@ via warm-up encode calls where reachable through the public API).
 | tls1.2_ticket_auth | 470 ns | 343 ns |
 | tls1.2_ticket_fastauth | 476 ns | 333 ns |
 
+> 2026-10-16 (§7): tls1.2_ticket_auth / fastauth encode are now **257 / 255 ns**
+> (in-place record packing, −47.8% / −45.6%).
+
 ## 4. P2 end-to-end vs C client (2026-09-25)
 
 | field | value |
@@ -159,7 +162,7 @@ routine). Same machine/method as above.
 | method | env — `with_method` (KDF) | encrypt_ctx — IV + context |
 |---|---:|---:|
 | `none` | 1.54 µs | 3.01 µs |
-| `table` | 72.06 ms | 3.01 µs |
+| `table` | 72.06 ms (uncached; since 3.2 cached per client ≈ 0.5 µs/conn — §7) | 3.01 µs |
 | `rc4` | 2.40 µs | 4.14 µs |
 | `rc4-md5-6` | 2.41 µs | 5.31 µs |
 | `rc4-md5` | 2.41 µs | 5.34 µs |
@@ -243,3 +246,26 @@ connection setup is network-bound, not compute-bound.
 
 **Result**: throughput rust/C = 102.8% (target >= 90%),
 CPU rust/C = 0.81x (target <= 1.5x) — throughput rust/C=102.76% (PASS, need >=90%)  cpu rust/C=0.81x (PASS, need <=1.5x)
+
+---
+
+## 7. Optimization batch 2026-10-16 (GOAL.md Phases 0–4)
+
+Same machine and methods as above; per-item provenance in the `GOAL.md`
+progress lines.
+
+| item | before | after |
+|---|---:|---:|
+| TTFB `table` (SOCKS5 CONNECT → first echo byte, 30 conns) | 72.85 ms | **0.10 ms** (C client: 0.05 ms) |
+| TTFB `aes-256-cfb` | 0.52 ms | 0.51 ms |
+| `session_setup/env/table` | 72.06 ms/conn | **≈ 0.5 µs/conn** (cached once per client, 3.2) |
+| obfs encode `tls1.2_ticket_auth` / `fastauth` | 470 / 476 ns | **257 / 255 ns** (−47.8% / −45.6%) |
+| relay allocations per 8 KB chunk, each direction | 3 | **2** (4.1 in-place plumbing) |
+| tls fastauth encode allocations | 2 | **1** (4.3 in-place packing) |
+| full bench regression, 145 items | — | median **+0.1%**; every >5% item attributed (drift re-run verified) |
+| e2e vs C client, 64 MiB median of 3 | 106.5% / 0.77× (2026-09-25) | 104.9% / 0.82× (2026-10-16) |
+
+`none` env setup moved 1.52 µs → 2.33 µs (+53.5%) **by design**: it now derives
+the 16-byte EVP key exactly like ssr-n (`enc_table_init` else-branch), fixing
+obfs/protocol interop with `method = none`; with the per-client cache this is
+paid once per client, not per connection.

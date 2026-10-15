@@ -96,6 +96,9 @@ auth_chain_a/c pre −5.8%（每包分配次数：auth_chain 5→2、auth_aes128
 | tls1.2_ticket_auth | 470 ns | 343 ns |
 | tls1.2_ticket_fastauth | 476 ns | 333 ns |
 
+> 2026-10-16（§7）：tls1.2_ticket_auth / fastauth encode 现为 **257 / 255 ns**
+> （record 原地打包，−47.8% / −45.6%）。
+
 ## 4. P2 端到端 vs C 客户端（2026-09-25）
 
 | 字段 | 值 |
@@ -150,7 +153,7 @@ tls1.2_ticket_auth，64 MiB 原始文件，每级 15 s 窗口。`client CPU%`
 | method | env — `with_method`（KDF） | encrypt_ctx — IV + 上下文 |
 |---|---:|---:|
 | `none` | 1.54 µs | 3.01 µs |
-| `table` | 72.06 ms | 3.01 µs |
+| `table` | 72.06 ms（未缓存；3.2 起每客户端缓存 ≈ 0.5 µs/连接 —— §7） | 3.01 µs |
 | `rc4` | 2.40 µs | 4.14 µs |
 | `rc4-md5-6` | 2.41 µs | 5.31 µs |
 | `rc4-md5` | 2.41 µs | 5.34 µs |
@@ -214,3 +217,24 @@ tls1.2_ticket_auth，64 MiB 原始文件，每级 15 s 窗口。`client CPU%`
 （cipher ctx）+ 0.14–14.8 µs（协议首包）+ 0.15–4.6 µs（obfs 握手）
 ≈ **几十 µs CPU** —— 相对一次网络 RTT 可忽略；建连是网络受限，
 不是算力受限。
+
+---
+
+## 7. 优化批次 2026-10-16（GOAL.md Phase 0–4）
+
+同机同方法；各项出处见 `GOAL.md` 进度行。
+
+| 项 | 改前 | 改后 |
+|---|---:|---:|
+| TTFB `table`（SOCKS5 CONNECT → 首字节回显，30 连接） | 72.85 ms | **0.10 ms**（C 客户端 0.05 ms） |
+| TTFB `aes-256-cfb` | 0.52 ms | 0.51 ms |
+| `session_setup/env/table` | 72.06 ms/连接 | **≈ 0.5 µs/连接**（每客户端缓存一次，3.2） |
+| obfs encode `tls1.2_ticket_auth` / `fastauth` | 470 / 476 ns | **257 / 255 ns**（−47.8% / −45.6%） |
+| relay 每 8 KB chunk 分配数（每方向） | 3 | **2**（4.1 原地管道） |
+| tls fastauth encode 分配数 | 2 | **1**（4.3 原地打包） |
+| 全量 bench 回归（145 项） | — | 中位 **+0.1%**；>5% 项全部归因（复跑证伪漂移） |
+| e2e 对比 C 客户端（64 MiB，3 次中位） | 106.5% / 0.77×（2026-09-25） | 104.9% / 0.82×（2026-10-16） |
+
+`none` 建表 1.52 µs → 2.33 µs（+53.5%）是**设计内代价**：现在像 ssr-n 一样
+推导 16 字节 EVP key（`enc_table_init` else 分支），修复 `method = none` 与
+obfs/protocol 的互通；有每客户端缓存后此成本每客户端仅付一次，不再按连接计。

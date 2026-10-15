@@ -48,7 +48,8 @@ The latest full matrix run lives in
 | UDP (3 combos) | **3 PASS** | — |
 
 Measured throughput and per-packet overhead live in [`BENCH.md`](BENCH.md)
-(head-to-head vs the C client: **106.5% of its throughput at 0.77× its CPU**,
+(head-to-head vs the C client: **104.9% of its throughput at 0.82× its CPU**
+(2026-10-16 run; see BENCH §7),
 concurrency curve, cipher/protocol/obfs/session-setup tables).
 
 ## Quick start
