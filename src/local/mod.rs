@@ -13,6 +13,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
@@ -488,13 +489,23 @@ where
 /// configured SSR server (including the obfs handshake), then relays
 /// data through the tunnel.
 async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> SsrResult<()> {
-    // Step 1: Method negotiation
-    let method_req = read_method_negotiation(&mut stream).await?;
+    // SOCKS5 handshake read budget, derived from connect_timeout (no new
+    // config field: SsrClientConfig is frozen). Floor of 2s so a 0/1 config
+    // cannot race a slow-but-valid client.
+    let hs_budget = Duration::from_secs(config.connect_timeout.max(2) as u64);
+
+    // Step 1: Method negotiation — framed reads under a total budget
+    // (GOAL 1.1: a fragmented greeting must reassemble, not misparse).
+    let method_req = tokio::time::timeout(hs_budget, read_method_negotiation(&mut stream))
+        .await
+        .map_err(|_| SsrError::Timeout("reading SOCKS5 method negotiation".to_string()))??;
     let selected = select_method(&method_req.methods)?;
     stream.write_all(&build_method_response(selected)).await?;
 
-    // Step 2: Connect request
-    let connect_req = read_connect_request(&mut stream).await?;
+    // Step 2: Connect request — same framing + budget treatment (GOAL 1.1)
+    let connect_req = tokio::time::timeout(hs_budget, read_connect_request(&mut stream))
+        .await
+        .map_err(|_| SsrError::Timeout("reading SOCKS5 CONNECT request".to_string()))??;
 
     // UDP ASSOCIATE: reply with this connection's local address (C: uv_tcp_
     // getsockname, client.c:653) — the UDP relay binds the same port number.
@@ -922,49 +933,89 @@ pub(crate) fn create_protocol(
     Ok(protocol)
 }
 
-/// Read and parse the SOCKS5 method negotiation from the client.
-async fn read_method_negotiation(stream: &mut TcpStream) -> SsrResult<socks5::MethodNegotiation> {
-    // SOCKS5 greeting: [version, nmethods, methods...]
-    // nmethods is at most 255, so we read at most 257 bytes
-    let mut buf = vec![0u8; 257];
-    let n = stream
-        .read(&mut buf)
+/// Read exactly `buf.len()` bytes from the handshake stream (GOAL 1.1).
+///
+/// Every handshake field is framed: TCP may hand us any prefix of a packet,
+/// and on a lossy link the first segment of a SOCKS5 greeting can be 1 byte.
+async fn socks_read_exact(stream: &mut TcpStream, buf: &mut [u8], what: &str) -> SsrResult<()> {
+    stream
+        .read_exact(buf)
         .await
-        .map_err(|e| SsrError::Socks5(format!("Failed to read method negotiation: {e}")))?;
+        .map_err(|e| SsrError::Socks5(format!("Failed to read {what}: {e}")))?;
+    Ok(())
+}
 
-    if n == 0 {
-        return Err(SsrError::socks5(
-            "Client closed connection during handshake",
-        ));
+/// Read and parse the SOCKS5 method negotiation from the client.
+///
+/// Framed reads (RFC 1928 §2): header `[version, nmethods]` first, then
+/// exactly `nmethods` method bytes — never one opportunistic `read()`,
+/// which misparses a fragmented greeting (GOAL 1.1).
+async fn read_method_negotiation(stream: &mut TcpStream) -> SsrResult<socks5::MethodNegotiation> {
+    // nmethods is at most 255, so the whole greeting is at most 257 bytes.
+    let mut head = [0u8; 2];
+    socks_read_exact(stream, &mut head, "SOCKS5 method negotiation header").await?;
+    let nmethods = head[1] as usize;
+    let mut buf = Vec::with_capacity(2 + nmethods);
+    buf.extend_from_slice(&head);
+    if nmethods > 0 {
+        let mut methods = vec![0u8; nmethods];
+        socks_read_exact(stream, &mut methods, "SOCKS5 method list").await?;
+        buf.extend_from_slice(&methods);
     }
 
-    parse_method_negotiation(&buf[..n])
+    parse_method_negotiation(&buf)
 }
 
 /// Read and parse the SOCKS5 CONNECT request from the client.
+///
+/// Framed reads (GOAL 1.1): 4-byte header, then the ATYP-dependent address,
+/// then the 2-byte port. Max request = version(1) + cmd(1) + rsv(1) +
+/// atyp(1) + domain_len(1) + domain(255) + port(2) = 262 bytes.
 async fn read_connect_request(stream: &mut TcpStream) -> SsrResult<socks5::ConnectRequest> {
-    // Max SOCKS5 request: version(1) + cmd(1) + rsv(1) + atyp(1) + domain_len(1) + domain(255) + port(2) = 262
-    let mut buf = vec![0u8; 262];
-    let n = stream
-        .read(&mut buf)
-        .await
-        .map_err(|e| SsrError::Socks5(format!("Failed to read CONNECT request: {e}")))?;
+    let mut head = [0u8; 4];
+    socks_read_exact(stream, &mut head, "SOCKS5 CONNECT header").await?;
+    let mut buf = head.to_vec();
 
-    if n == 0 {
-        return Err(SsrError::socks5("Client closed connection during CONNECT"));
+    match head[3] {
+        socks5::ATYP_IPV4 => {
+            let mut addr = [0u8; 4];
+            socks_read_exact(stream, &mut addr, "SOCKS5 CONNECT IPv4 address").await?;
+            buf.extend_from_slice(&addr);
+        }
+        socks5::ATYP_IPV6 => {
+            let mut addr = [0u8; 16];
+            socks_read_exact(stream, &mut addr, "SOCKS5 CONNECT IPv6 address").await?;
+            buf.extend_from_slice(&addr);
+        }
+        socks5::ATYP_DOMAIN => {
+            let mut len = [0u8; 1];
+            socks_read_exact(stream, &mut len, "SOCKS5 CONNECT domain length").await?;
+            buf.push(len[0]);
+            if len[0] > 0 {
+                let mut domain = vec![0u8; len[0] as usize];
+                socks_read_exact(stream, &mut domain, "SOCKS5 CONNECT domain").await?;
+                buf.extend_from_slice(&domain);
+            }
+        }
+        // Unknown ATYP: hand the header straight to the parser so it
+        // produces its canonical "Unknown address type" error.
+        _ => return parse_connect_request(&buf),
     }
+
+    let mut port = [0u8; 2];
+    socks_read_exact(stream, &mut port, "SOCKS5 CONNECT port").await?;
+    buf.extend_from_slice(&port);
 
     ssr_debug!(
         "[socks5] Raw CONNECT: {} bytes: {}",
-        n,
-        buf[..n]
-            .iter()
+        buf.len(),
+        buf.iter()
             .map(|b| format!("{:02x}", b))
             .collect::<Vec<_>>()
             .join(" ")
     );
 
-    parse_connect_request(&buf[..n])
+    parse_connect_request(&buf)
 }
 
 /// Select an authentication method from the client's offered methods.

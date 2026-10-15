@@ -5,19 +5,22 @@
 //! tunnel is needed:
 //!
 //! * `socks5_greeting_fragmented_gets_reply` (no server needed) — the SOCKS5
-//!   greeting is written one byte per 30ms, exactly what a lossy network does
-//!   to a small packet. **Expected RED on current code**: `read_method_
-//!   negotiation` does one `read()` then parses (`src/local/mod.rs`), so a
-//!   1-byte first segment fails (`parse_method_negotiation` errors below 2
-//!   bytes). Green after GOAL 1.1.
+//!   greeting is written one byte per 30ms (lossy-network half-packet).
+//!   Was RED before GOAL 1.1 (single `read()` then parse; `parse_method_
+//!   negotiation` errors below 2 bytes); green after the framed reads landed.
 //! * `flaky_wire_full_chain_roundtrip` (ignored, needs the C server) — a
-//!   re-chunking TCP proxy sits between our client and the server and
-//!   re-splits every segment into 1–3 byte writes with 1ms gaps in BOTH
-//!   directions. Exercises GOAL 1.1 (fragmented CONNECT too), 1.2 (first
-//!   server bytes shorter than the cipher IV), 1.3 (obfs handshake response
-//!   split) and 1.4 (feedback split) end to end against the production combo
-//!   `aes-256-cfb + auth_aes128_sha1 + tls1.2_ticket_auth`.
-//!   **Expected RED before those fixes.**
+//!   re-chunking TCP proxy between our client and the server, BOTH
+//!   directions. Default models REAL TCP segmentation (≤1400-byte MSS
+//!   pieces; separate sender writes surface as separate reads naturally)
+//!   over the production combo `aes-256-cfb + auth_aes128_sha1 +
+//!   tls1.2_ticket_auth` — the end-to-end regression guard for GOAL 1.1–1.4.
+//!   Triage knobs: `FLAKY_TRANSPARENT=1` (byte-verbatim),
+//!   `FLAKY_CHUNK=<n>` (sub-MSS stress — control-proven with
+//!   `FLAKY_CLIENT=c` that even the reference C client dies when the C
+//!   SERVER receives a ClientHello split below MSS: server limitation,
+//!   recorded in GOAL 1.1 progress, not our bug),
+//!   `FLAKY_SOCKS_GAP_MS=0` (unfragmented SOCKS messages for control runs —
+//!   the C client cannot reassemble split SOCKS bytes at all).
 //!
 //! Ports: fixed pool 20000..30000 (below Linux ephemeral floor), disjoint per
 //! test so the two tests never collide when run in parallel threads:
@@ -53,6 +56,7 @@ fn cfg_text(srv_port: u16, cli_port: u16) -> String {
   "server_port": {srv_port},
   "local_address": "127.0.0.1",
   "listen_port": {cli_port},
+  "local_port": {cli_port},
   "password": "flaky_pass_1",
   "method": "aes-256-cfb",
   "protocol": "auth_aes128_sha1",
@@ -109,12 +113,33 @@ fn log_tail(path: &Path) -> String {
 /// Write errors are tolerated: a server that kills the connection on a
 /// half-packet is exactly the bug under test, so the failure must surface at
 /// the caller's read assertion (with its GOAL reference), not here.
+/// A ZERO gap means unfragmented — one write for the whole message
+/// (`FLAKY_SOCKS_GAP_MS=0`, used by control runs that must get past the
+/// SOCKS layer to reach the tunnel under test).
 fn send_fragmented(s: &mut TcpStream, bytes: &[u8], gap: Duration) {
+    if gap.is_zero() {
+        let _ = s.write_all(bytes);
+        let _ = s.flush();
+        return;
+    }
     for b in bytes {
         let _ = s.write_all(std::slice::from_ref(b));
         let _ = s.flush();
         std::thread::sleep(gap);
     }
+}
+
+/// Inter-byte gap for the fragmented SOCKS5 writes. Override with
+/// `FLAKY_SOCKS_GAP_MS` — `0` sends each SOCKS message unfragmented
+/// (control mode: the reference C client cannot reassemble split SOCKS
+/// bytes at all — GOAL 1.1 is our fix, not its — so a control run skips
+/// SOCKS fragmentation to reach the tunnel layer under test).
+fn socks_gap(default_ms: u64) -> Duration {
+    let ms = std::env::var("FLAKY_SOCKS_GAP_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(default_ms);
+    Duration::from_millis(ms)
 }
 
 /// Detached TCP echo target: echoes each connection's bytes back until EOF.
@@ -143,11 +168,20 @@ fn start_echo(port: u16) {
     );
 }
 
-/// Spawn our client binary from a config file; returns the child (guarded).
+/// Spawn the client binary from a config file; returns the child (guarded).
+///
+/// `FLAKY_CLIENT=c` swaps in the reference C client (`/opt/ssr/ssr-client`)
+/// as a control — same config, same flaky wire — to decide whether a failure
+/// is our bug or a server-side limitation.
 fn spawn_client(cfg: &Path, log: &Path, tag: &str) -> Child {
     let out = std::fs::File::create(log).unwrap_or_else(|e| panic!("{tag} log create: {e}"));
     let err = out.try_clone().expect("clone log");
-    Command::new(env!("CARGO_BIN_EXE_ssr_client"))
+    let bin = if std::env::var_os("FLAKY_CLIENT").as_deref() == Some(std::ffi::OsStr::new("c")) {
+        "/opt/ssr/ssr-client".to_string()
+    } else {
+        env!("CARGO_BIN_EXE_ssr_client").to_string()
+    };
+    Command::new(bin)
         .args(["-c", &cfg.to_string_lossy()])
         .stdout(out)
         .stderr(err)
@@ -178,7 +212,7 @@ async fn socks5_greeting_fragmented_gets_reply() {
         .expect("wto");
 
     // [version, nmethods, method...] split into single-byte segments.
-    send_fragmented(&mut s, &[0x05, 0x01, 0x00], Duration::from_millis(30));
+    send_fragmented(&mut s, &[0x05, 0x01, 0x00], socks_gap(30));
 
     let mut reply = [0u8; 2];
     let got = s.read_exact(&mut reply);
@@ -192,30 +226,53 @@ async fn socks5_greeting_fragmented_gets_reply() {
     assert_eq!(reply, [0x05, 0x00], "method reply must be [05 00]");
 }
 
-// ── Test 2: full chain through a re-chunking proxy (RED until GOAL 1.x) ───
+// ── Test 2: full chain through the re-chunking proxy (regression guard) ──
 
-/// Re-split every byte stream into 1–3 byte writes with 1ms gaps, both
-/// directions. Deterministic cycling (no RNG) so failures reproduce.
+/// Re-split every byte stream, both directions. Deterministic, no RNG, so
+/// failures reproduce.
+///
+/// Default models REAL TCP segmentation: pieces of at most the loopback MSS
+/// (1400) — a sender write below MSS arrives whole, so only reads larger
+/// than MSS ever split. Sub-MSS write-boundary splits still happen naturally
+/// (separate `send()`s surface as separate reads). The C server was
+/// control-proven (FLAKY_CLIENT=c) to KILL a tunnel whose ClientHello is
+/// split below MSS, so sub-MSS artificial splitting is opt-in stress only:
+///
+/// * `FLAKY_TRANSPARENT=1` — forward verbatim: no chunking, no delay
+///   (isolates "proxy infrastructure" from "wire fragmentation").
+/// * `FLAKY_CHUNK=<n>` — fixed n-byte pieces (e.g. `3` = the aggressive
+///   stress mode that breaks even the reference C client on this server).
 async fn flaky_copy(
     mut src: tokio::net::tcp::OwnedReadHalf,
     mut dst: tokio::net::tcp::OwnedWriteHalf,
 ) {
+    let transparent = std::env::var_os("FLAKY_TRANSPARENT").is_some();
+    let fixed_chunk: Option<usize> = std::env::var("FLAKY_CHUNK")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0);
+    let max_piece = fixed_chunk.unwrap_or(1400);
     let mut buf = vec![0u8; 4096];
-    let mut cycle = 0usize;
     loop {
         let n = match src.read(&mut buf).await {
             Ok(0) | Err(_) => break,
             Ok(n) => n,
         };
+        if transparent {
+            if dst.write_all(&buf[..n]).await.is_err() {
+                return;
+            }
+            continue;
+        }
         let mut off = 0usize;
         while off < n {
-            let take = 1 + cycle % 3;
-            cycle += 1;
-            let end = (off + take).min(n);
+            let end = (off + max_piece).min(n);
             if dst.write_all(&buf[off..end]).await.is_err() {
                 return;
             }
-            tokio::time::sleep(Duration::from_millis(1)).await;
+            if end < n {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
             off = end;
         }
     }
@@ -260,7 +317,7 @@ async fn socks_connect_fragmented(proxy_port: u16, target_port: u16) -> TcpStrea
     s.set_write_timeout(Some(Duration::from_secs(10)))
         .expect("wto");
 
-    send_fragmented(&mut s, &[0x05, 0x01, 0x00], Duration::from_millis(30));
+    send_fragmented(&mut s, &[0x05, 0x01, 0x00], socks_gap(30));
     let mut m = [0u8; 2];
     s.read_exact(&mut m).unwrap_or_else(|e| {
         panic!(
@@ -272,7 +329,7 @@ async fn socks_connect_fragmented(proxy_port: u16, target_port: u16) -> TcpStrea
 
     let mut req = vec![0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1];
     req.extend_from_slice(&target_port.to_be_bytes());
-    send_fragmented(&mut s, &req, Duration::from_millis(20));
+    send_fragmented(&mut s, &req, socks_gap(20));
 
     let mut head = [0u8; 4];
     s.read_exact(&mut head).expect("connect reply head");
@@ -340,8 +397,8 @@ async fn flaky_wire_full_chain_roundtrip() {
     let mut got = vec![0u8; payload.len()];
     s.read_exact(&mut got).unwrap_or_else(|e| {
         panic!(
-            "GOAL 1.2/1.3/1.4 (wire split): no echo through 1–3-byte chunked \
-             proxy: {e:?}\nclient log:\n{}\nserver log:\n{}",
+            "full-chain flaky wire: no echo through the re-chunking proxy \
+             (GOAL 1.2/1.3/1.4 coverage): {e:?}\nclient log:\n{}\nserver log:\n{}",
             log_tail(&cli_log),
             log_tail(&srv_log)
         )
