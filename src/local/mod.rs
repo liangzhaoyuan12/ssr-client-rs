@@ -84,6 +84,16 @@ impl SsrClient {
             );
         }
 
+        // GOAL 2.6: bound concurrent connection tasks. Under saturation the
+        // connection is dropped before the SOCKS handshake — the client sees
+        // a refused connection and can retry, instead of an unbounded
+        // task/FD explosion. (Deviates from "reply a SOCKS failure": a
+        // failure reply needs a parsed request first; dropping under load
+        // is the standard behaviour.)
+        let conn_limiter = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_CONNECTIONS));
+        // GOAL 2.5: exponential accept-error backoff counter.
+        let mut accept_failures: u32 = 0;
+
         loop {
             // Value check every turn: a stop() that already happened (or
             // lands outside the select) is seen here instead of hanging.
@@ -95,16 +105,33 @@ impl SsrClient {
                 accept_result = listener.accept() => {
                     match accept_result {
                         Ok((stream, peer_addr)) => {
+                            // GOAL 2.5: a healthy accept resets the backoff.
+                            accept_failures = 0;
                             log::debug!("New connection from {peer_addr}");
+                            let Ok(permit) = Arc::clone(&conn_limiter).try_acquire_owned() else {
+                                log::warn!(
+                                    "Connection limit ({MAX_CONCURRENT_CONNECTIONS}) reached — dropping {peer_addr}"
+                                );
+                                continue;
+                            };
                             let config = self.config.clone();
                             tokio::spawn(async move {
+                                let _permit = permit; // held for the connection's lifetime
                                 if let Err(e) = handle_connection(stream, &config).await {
                                     log::debug!("Connection from {peer_addr} error: {e}");
                                 }
                             });
                         }
                         Err(e) => {
-                            log::error!("Accept error: {e}");
+                            // GOAL 2.5: back off exponentially (1ms → 100ms
+                            // cap) so EMFILE/FD exhaustion cannot spin hot;
+                            // throttle the log so one burst is not 10k lines.
+                            accept_failures += 1;
+                            if accept_failures <= 4 || accept_failures.is_power_of_two() {
+                                log::warn!("Accept error (×{accept_failures}): {e}");
+                            }
+                            let backoff_ms = (1u64 << (accept_failures.min(8) - 1)).min(100);
+                            tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
                         }
                     }
                 }
@@ -139,6 +166,12 @@ impl SsrClient {
         &self.config
     }
 }
+
+/// GOAL 2.6: concurrent-connection ceiling (private — `SsrClientConfig`
+/// is frozen, so there is no config field for it). Sized for real usage
+/// (each task costs a few KBs plus one FD pair); the 100-way concurrency
+/// e2e sits two orders of magnitude below.
+const MAX_CONCURRENT_CONNECTIONS: usize = 4096;
 
 /// GOAL 2.4: TCP keepalive (30s idle / 10s interval / 3 retries) so a peer
 /// that vanished mid-flow (mobile network switch, NAT/conntrack expiry) is
