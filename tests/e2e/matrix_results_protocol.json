@@ -1,0 +1,118 @@
+{
+  "client": "RUST",
+  "server_sha12": "d70342262c45",
+  "results": [
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "origin",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "verify_simple",
+      "obfs": "plain",
+      "http": "SKIP",
+      "detail": "SKIP: server has no server_post_decrypt (C client fails too)"
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "auth_simple",
+      "obfs": "plain",
+      "http": "SKIP",
+      "detail": "SKIP: server has no server_post_decrypt (C client fails too)"
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "auth_sha1",
+      "obfs": "plain",
+      "http": "SKIP",
+      "detail": "SKIP: server has no server_post_decrypt (C client fails too)"
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "auth_sha1_v2",
+      "obfs": "plain",
+      "http": "SKIP",
+      "detail": "SKIP: server has no server_post_decrypt (C client fails too)"
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "auth_sha1_v4",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "auth_aes128_md5",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "auth_aes128_sha1",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "auth_chain_a",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "auth_chain_b",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "auth_chain_c",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "auth_chain_d",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-256-cfb",
+      "protocol": "auth_chain_e",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    },
+    {
+      "axis": "protocol",
+      "method": "aes-128-cfb",
+      "protocol": "auth_chain_f",
+      "obfs": "plain",
+      "http": "200",
+      "detail": ""
+    }
+  ]
+}
