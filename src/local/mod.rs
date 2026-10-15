@@ -139,6 +139,33 @@ impl SsrClient {
     }
 }
 
+/// GOAL 2.1: hard ceiling for a single relay write when `idle_timeout` is
+/// disabled (0). A write stalled longer than the connection's own idle
+/// timeout (or this fallback) means the peer is gone.
+const WRITE_STALL_LIMIT_SECS: u64 = 300;
+
+/// One relay write under a stall ceiling (GOAL 2.1).
+///
+/// `write_all` inside a `select!` arm blocks the whole relay task; without
+/// a ceiling the idle reclamation timer — same task — can never fire, and
+/// the task hangs until the kernel gives up retransmission (~15 min). On
+/// timeout a partial write may have hit the wire, so the stream is corrupt
+/// by definition: the error propagates and closes the connection.
+async fn write_guarded<W: AsyncWrite + Unpin>(
+    what: &str,
+    writer: &mut W,
+    buf: &[u8],
+    budget: Duration,
+) -> SsrResult<()> {
+    match tokio::time::timeout(budget, writer.write_all(buf)).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(SsrError::Connection(format!("{what}: {e}"))),
+        Err(_) => Err(SsrError::Timeout(format!(
+            "{what} stalled for {budget:?} — peer is not draining (GOAL 2.1)"
+        ))),
+    }
+}
+
 /// Obfs-aware TCP relay that handles obfs encode/decode.
 ///
 /// Wraps upstream data with obfs encode before sending to server,
@@ -258,6 +285,15 @@ where
         let mut local_buf = vec![0u8; self.buffer_size];
         let mut remote_buf = vec![0u8; self.buffer_size];
 
+        // GOAL 2.1: every relay write runs under a stall ceiling —
+        // idle_timeout when set, else the private WRITE_STALL_LIMIT_SECS
+        // floor (idle_timeout=0 must still terminate a stalled task).
+        let write_budget = Duration::from_secs(if self.idle_timeout > 0 {
+            self.idle_timeout.max(1) as u64
+        } else {
+            WRITE_STALL_LIMIT_SECS
+        });
+
         // Step 1: Wait for first data from local client, then send
         // address + first data together through protocol layer.
         // This is needed for auth_chain protocols which pack
@@ -333,7 +369,13 @@ where
                     .collect::<Vec<_>>()
                     .join("")
             );
-            self.remote_write.write_all(&encoded).await?;
+            write_guarded(
+                "tunnel write (address+data)",
+                &mut self.remote_write,
+                &encoded,
+                write_budget,
+            )
+            .await?;
             self.addr_sent = true;
             total_up += combined.len() as u64;
 
@@ -364,7 +406,13 @@ where
                             )?;
                             let decoded = self.protocol.client_post_decrypt(&decrypted_cipher)?;
                             if !decoded.is_empty() {
-                                self.local_write.write_all(&decoded).await?;
+                                write_guarded(
+                                    "local write (feedback)",
+                                    &mut self.local_write,
+                                    &decoded,
+                                    write_budget,
+                                )
+                                .await?;
                             }
                         }
                         total_down += n as u64;
@@ -397,10 +445,24 @@ where
                             if let Err(e) = self.remote_write.shutdown().await {
                                 ssr_debug!("[relay] FIN to server failed (draining anyway): {e}");
                             }
+                            // GOAL 2.2: bounded drain — a server that stops
+                            // sending without ever EOF'ing must not hold
+                            // this task forever; the drain runs under the
+                            // same write-stall ceiling (writes guarded by
+                            // GOAL 2.1, reads by this deadline).
+                            let drain_deadline =
+                                tokio::time::Instant::now() + write_budget;
                             loop {
-                                match self.remote_read.read(&mut remote_buf).await {
-                                    Ok(0) => { ssr_debug!("[relay] Server EOF after drain"); break; }
-                                    Ok(n) => {
+                                let remaining = drain_deadline
+                                    .saturating_duration_since(tokio::time::Instant::now());
+                                let read = tokio::time::timeout(
+                                    remaining,
+                                    self.remote_read.read(&mut remote_buf),
+                                )
+                                .await;
+                                match read {
+                                    Ok(Ok(0)) => { ssr_debug!("[relay] Server EOF after drain"); break; }
+                                    Ok(Ok(n)) => {
                                         let (decrypted_obfs, _) = self.obfs.client_decode(&remote_buf[..n])?;
                                         if !decrypted_obfs.is_empty() {
                                             // GOAL 1.2: IV assembly + decrypt
@@ -411,12 +473,22 @@ where
                                             )?;
                                             let decoded = self.protocol.client_post_decrypt(&decrypted_cipher)?;
                                             if !decoded.is_empty() {
-                                                self.local_write.write_all(&decoded).await?;
+                                                write_guarded(
+                                                    "local write (drain)",
+                                                    &mut self.local_write,
+                                                    &decoded,
+                                                    write_budget,
+                                                )
+                                                .await?;
                                             }
                                             total_down += n as u64;
                                         }
                                     }
-                                    Err(_) => break,
+                                    Ok(Err(_)) => break,
+                                    Err(_) => {
+                                        ssr_debug!("[relay] Drain deadline reached (GOAL 2.2)");
+                                        break;
+                                    }
                                 }
                             }
                             break;
@@ -433,7 +505,13 @@ where
                             // Obfs: wrap in TLS record
                             let encoded = self.obfs.client_encode(&encrypted)?;
                             ssr_debug!("[relay] Obfs encoded: {} bytes", encoded.len());
-                            self.remote_write.write_all(&encoded).await?;
+                            write_guarded(
+                                "tunnel write (upstream)",
+                                &mut self.remote_write,
+                                &encoded,
+                                write_budget,
+                            )
+                            .await?;
                             total_up += n as u64;
                         }
                         Err(e) => {
@@ -471,7 +549,13 @@ where
                             let decoded = self.protocol.client_post_decrypt(&decrypted_cipher)?;
                             ssr_debug!("[relay] Protocol decoded: {} bytes", decoded.len());
                             if !decoded.is_empty() {
-                                self.local_write.write_all(&decoded).await?;
+                                write_guarded(
+                                    "local write (downstream)",
+                                    &mut self.local_write,
+                                    &decoded,
+                                    write_budget,
+                                )
+                                .await?;
                             }
                             total_down += n as u64;
                         }
@@ -1115,6 +1199,70 @@ mod tests {
     use super::*;
     use crate::config::SsrClientConfig;
     use crate::crypto::{CipherType, ObfsType, ProtocolType};
+
+    // ── GOAL 2.1: write stall guard ────────────────────────────────────────
+
+    /// A writer that never accepts data: `write_guarded` must return
+    /// `SsrError::Timeout` near the budget — the pre-2.1 code hung on this
+    /// until the kernel gave up retransmission (~15 min), with the idle
+    /// timer unable to fire because the write held the relay task.
+    #[tokio::test]
+    async fn write_guarded_times_out_on_stalled_writer() {
+        use std::pin::Pin;
+        use std::task::{Context, Poll};
+        use tokio::io::AsyncWrite;
+
+        struct StalledWriter;
+        impl AsyncWrite for StalledWriter {
+            fn poll_write(
+                self: Pin<&mut Self>,
+                _cx: &mut Context<'_>,
+                _buf: &[u8],
+            ) -> Poll<std::io::Result<usize>> {
+                Poll::Pending
+            }
+            fn poll_flush(
+                self: Pin<&mut Self>,
+                _cx: &mut Context<'_>,
+            ) -> Poll<std::io::Result<()>> {
+                Poll::Ready(Ok(()))
+            }
+            fn poll_shutdown(
+                self: Pin<&mut Self>,
+                _cx: &mut Context<'_>,
+            ) -> Poll<std::io::Result<()>> {
+                Poll::Ready(Ok(()))
+            }
+        }
+
+        let started = tokio::time::Instant::now();
+        let res = write_guarded(
+            "stalled",
+            &mut StalledWriter,
+            &[0u8; 32],
+            Duration::from_millis(100),
+        )
+        .await;
+        match res {
+            Err(SsrError::Timeout(msg)) => assert!(msg.contains("GOAL 2.1"), "msg: {msg}"),
+            other => panic!("expected SsrError::Timeout, got {other:?}"),
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "guard must fire near the budget, took {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// Writes that complete normally pass through untouched.
+    #[tokio::test]
+    async fn write_guarded_passes_normal_writes() {
+        let mut sink: Vec<u8> = Vec::new();
+        write_guarded("vec", &mut sink, b"payload", Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert_eq!(sink, b"payload");
+    }
 
     #[test]
     fn test_ssr_client_new() {

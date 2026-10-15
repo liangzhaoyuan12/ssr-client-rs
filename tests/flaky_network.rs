@@ -50,6 +50,12 @@ const SERVER_BIN: &str = "/opt/ssr/ssr-server";
 /// our client connects to it and binds `listen_port` (same shape the
 /// `resilience` suite already proved works).
 fn cfg_text(srv_port: u16, cli_port: u16) -> String {
+    cfg_text_idle(srv_port, cli_port, 30)
+}
+
+/// Same config with a custom `idle_timeout` (GOAL 2.1 uses it as the relay
+/// write-stall budget, so the stall test sets 2).
+fn cfg_text_idle(srv_port: u16, cli_port: u16, idle_timeout: u32) -> String {
     format!(
         r#"{{
   "server": "127.0.0.1",
@@ -65,7 +71,7 @@ fn cfg_text(srv_port: u16, cli_port: u16) -> String {
   "obfs_param": "",
   "timeout": 60,
   "udp": false,
-  "idle_timeout": 30
+  "idle_timeout": {idle_timeout}
 }}"#
     )
 }
@@ -319,15 +325,16 @@ async fn spawn_flaky_proxy(listen: u16, target: u16) {
     );
 }
 
-/// SOCKS5 CONNECT with every client-side byte fragmented, then a roundtrip.
-async fn socks_connect_fragmented(proxy_port: u16, target_port: u16) -> TcpStream {
+/// SOCKS5 CONNECT with client-side bytes fragmented per `gap` (zero gap =
+/// unfragmented messages), then ready for a roundtrip.
+async fn socks_connect_fragmented(proxy_port: u16, target_port: u16, gap: Duration) -> TcpStream {
     let mut s = TcpStream::connect(("127.0.0.1", proxy_port)).expect("socks connect");
     s.set_read_timeout(Some(Duration::from_secs(10)))
         .expect("rto");
     s.set_write_timeout(Some(Duration::from_secs(10)))
         .expect("wto");
 
-    send_fragmented(&mut s, &[0x05, 0x01, 0x00], socks_gap(30));
+    send_fragmented(&mut s, &[0x05, 0x01, 0x00], gap);
     let mut m = [0u8; 2];
     s.read_exact(&mut m).unwrap_or_else(|e| {
         panic!(
@@ -339,7 +346,7 @@ async fn socks_connect_fragmented(proxy_port: u16, target_port: u16) -> TcpStrea
 
     let mut req = vec![0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1];
     req.extend_from_slice(&target_port.to_be_bytes());
-    send_fragmented(&mut s, &req, socks_gap(20));
+    send_fragmented(&mut s, &req, gap);
 
     let mut head = [0u8; 4];
     s.read_exact(&mut head).expect("connect reply head");
@@ -401,7 +408,7 @@ async fn flaky_wire_full_chain_roundtrip() {
         log_tail(&cli_log)
     );
 
-    let mut s = socks_connect_fragmented(FC_SOCKS, FC_ECHO).await;
+    let mut s = socks_connect_fragmented(FC_SOCKS, FC_ECHO, socks_gap(30)).await;
     let payload = b"flaky-roundtrip";
     s.write_all(payload).expect("payload send");
     let mut got = vec![0u8; payload.len()];
@@ -414,4 +421,116 @@ async fn flaky_wire_full_chain_roundtrip() {
         )
     });
     assert_eq!(got, payload, "echo mismatch");
+}
+
+// ── Test 3: stalled peer must terminate the relay (GOAL 2.1) ──────────────
+
+const STALL_SOCKS: u16 = 20161;
+const STALL_SRV: u16 = 20162;
+const STALL_TARGET: u16 = 20163;
+
+/// Accepts connections and NEVER reads a byte: the socket pair applies full
+/// TCP backpressure forever (loopback buffers fill, then every write stalls).
+fn start_stall_target(port: u16) {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", port)).expect("stall bind");
+    std::thread::spawn(move || {
+        let mut held: Vec<TcpStream> = Vec::new();
+        for s in listener.incoming().flatten() {
+            held.push(s); // hold the connection open, read nothing
+        }
+        drop(held);
+    });
+    assert!(
+        wait_port(port, Duration::from_secs(2)),
+        "stall target not up on {port}"
+    );
+}
+
+/// GOAL 2.1 end-to-end: pump far more than every kernel buffer on the path
+/// into a target that never reads, while never reading ourselves. The relay's
+/// upstream `write_all` must stall, the write guard (budget = idle_timeout
+/// here: 2s) must fire, and the connection must CLOSE us out — a read
+/// timeout instead would mean the relay task is still hung (pre-2.1 bug).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "e2e: spawns /opt/ssr/ssr-server; GOAL 2.1 write-stall guard"]
+async fn stalled_peer_write_guard_terminates_relay() {
+    assert!(
+        std::path::Path::new(SERVER_BIN).exists(),
+        "{SERVER_BIN} not found — this e2e needs the C server"
+    );
+    start_stall_target(STALL_TARGET);
+
+    let dir = std::env::temp_dir();
+    let srv_cfg = dir.join("flaky_stall_srv.json");
+    let cli_cfg = dir.join("flaky_stall_cli.json");
+    let srv_log = dir.join("flaky_stall_srv.log");
+    let cli_log = dir.join("flaky_stall_cli.log");
+    // idle_timeout=2 on the client: GOAL 2.1 uses it as the write budget.
+    std::fs::write(&srv_cfg, cfg_text(STALL_SRV, STALL_SOCKS)).expect("write srv cfg");
+    std::fs::write(&cli_cfg, cfg_text_idle(STALL_SRV, STALL_SOCKS, 2)).expect("write cli cfg");
+
+    let srv_out = std::fs::File::create(&srv_log).expect("srv log");
+    let srv_err = srv_out.try_clone().expect("clone srv log");
+    let mut kids = Kids(vec![Command::new(SERVER_BIN)
+        .args(["-c", &srv_cfg.to_string_lossy()])
+        .stdout(srv_out)
+        .stderr(srv_err)
+        .spawn()
+        .expect("spawn ssr-server")]);
+    assert!(
+        wait_port(STALL_SRV, Duration::from_secs(5)),
+        "ssr-server did not bind {STALL_SRV}\n{}",
+        log_tail(&srv_log)
+    );
+    kids.0.push(spawn_client(&cli_cfg, &cli_log, "stall"));
+    assert!(
+        wait_port(STALL_SOCKS, Duration::from_secs(5)),
+        "client did not bind {STALL_SOCKS}\n{}",
+        log_tail(&cli_log)
+    );
+
+    // Unfragmented SOCKS (gap=0): the stall, not fragmentation, is under test.
+    let mut s = socks_connect_fragmented(STALL_SOCKS, STALL_TARGET, Duration::ZERO).await;
+    s.set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("rto");
+    s.set_write_timeout(Some(Duration::from_secs(10)))
+        .expect("wto");
+
+    // Pump 128 MiB without ever reading — far beyond every kernel buffer on
+    // the test -> client -> server -> stalled-target path.
+    let chunk = vec![0xA5u8; 64 * 1024];
+    let mut pumped = 0u64;
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while pumped < 128 * 1024 * 1024 && std::time::Instant::now() < deadline {
+        match s.write_all(&chunk) {
+            Ok(()) => pumped += chunk.len() as u64,
+            // RST once the relay died (guard fired), or our own write
+            // timeout if the guard failed — the read below settles it.
+            Err(_) => break,
+        }
+    }
+    assert!(pumped > 0, "must have pushed something before stalling");
+
+    // GOAL 2.1 assertion: the relay CLOSES us out (EOF or reset) — NOT a
+    // read timeout, which would mean the relay task is still hung.
+    let mut b = [0u8; 16];
+    match s.read(&mut b) {
+        Ok(0) => {}
+        Ok(n) => panic!("unexpected {n} bytes after relay close"),
+        Err(e) => assert!(
+            !matches!(
+                e.kind(),
+                std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+            ),
+            "read timed out — relay still alive, write guard did not fire \
+             (pumped {pumped} bytes): {e}\nclient log:\n{}",
+            log_tail(&cli_log)
+        ),
+    }
+
+    // The client process must survive its relay task dying.
+    assert!(
+        matches!(kids.0[1].try_wait(), Ok(None)),
+        "client process must stay alive after a stalled peer"
+    );
 }
