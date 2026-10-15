@@ -1075,6 +1075,7 @@ dependencies = [
  "rc4",
  "salsa20",
  "sha1",
+ "socket2",
  "thiserror",
  "tokio",
 ]

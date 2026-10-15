@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use socket2::{SockRef, TcpKeepalive};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
@@ -137,6 +138,29 @@ impl SsrClient {
     pub fn config(&self) -> &SsrClientConfig {
         &self.config
     }
+}
+
+/// GOAL 2.4: TCP keepalive (30s idle / 10s interval / 3 retries) so a peer
+/// that vanished mid-flow (mobile network switch, NAT/conntrack expiry) is
+/// detected in ~60s instead of the ~15 minutes a dead route burns in kernel
+/// retransmission. The stream passes through std briefly to reach the socket
+/// options; it re-registers with the reactor on the way back. Applied to the
+/// tunnel socket and the accepted SOCKS5 socket before any I/O.
+fn with_keepalive(stream: TcpStream) -> SsrResult<TcpStream> {
+    let std = stream
+        .into_std()
+        .map_err(|e| SsrError::Connection(format!("keepalive prep: {e}")))?;
+    {
+        let sock = SockRef::from(&std);
+        let ka = TcpKeepalive::new()
+            .with_time(Duration::from_secs(30))
+            .with_interval(Duration::from_secs(10))
+            .with_retries(3);
+        sock.set_keepalive(true)
+            .and_then(|()| sock.set_tcp_keepalive(&ka))
+            .map_err(|e| SsrError::Connection(format!("set TCP keepalive: {e}")))?;
+    }
+    TcpStream::from_std(std).map_err(|e| SsrError::Connection(format!("keepalive re-wrap: {e}")))
 }
 
 /// GOAL 2.1: hard ceiling for a single relay write when `idle_timeout` is
@@ -578,6 +602,10 @@ where
 /// configured SSR server (including the obfs handshake), then relays
 /// data through the tunnel.
 async fn handle_connection(mut stream: TcpStream, config: &SsrClientConfig) -> SsrResult<()> {
+    // GOAL 2.4: keepalive on the accepted SOCKS5 socket (a vanished app
+    // must not leave the relay task waiting on a dead connection).
+    stream = with_keepalive(stream)?;
+
     // SOCKS5 handshake read budget, derived from connect_timeout (no new
     // config field: SsrClientConfig is frozen). Floor of 2s so a 0/1 config
     // cannot race a slow-but-valid client.
@@ -1191,7 +1219,8 @@ async fn connect_to_ssr_server(config: &SsrClientConfig) -> SsrResult<TcpStream>
     .map_err(|e| SsrError::Connection(format!("Failed to connect to SSR server {addr}: {e}")))?;
 
     log::debug!("Connected to SSR server at {addr}");
-    Ok(stream)
+    // GOAL 2.4: keepalive on the tunnel socket.
+    with_keepalive(stream)
 }
 
 #[cfg(test)]
@@ -1262,6 +1291,45 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(sink, b"payload");
+    }
+
+    // ── GOAL 2.4: TCP keepalive ────────────────────────────────────────────
+
+    /// The keepalive options must actually land on the kernel socket, and
+    /// the stream must stay fully usable after the std round-trip.
+    #[tokio::test]
+    async fn with_keepalive_sets_kernel_options() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let accepted = listener.accept().await.unwrap().0;
+
+        let mut kept = with_keepalive(accepted).expect("keepalive must apply");
+
+        // Still a fully working tokio stream after into_std/from_std.
+        client.write_all(b"x").await.unwrap();
+        let mut b = [0u8; 1];
+        kept.read_exact(&mut b).await.unwrap();
+        assert_eq!(b[0], b'x', "stream must survive the std round-trip");
+
+        // Kernel-level proof: read the options back off the socket.
+        let std = kept.into_std().unwrap();
+        let sock = SockRef::from(&std);
+        assert!(sock.keepalive().unwrap(), "SO_KEEPALIVE must be on");
+        assert_eq!(
+            sock.tcp_keepalive_time().unwrap(),
+            Duration::from_secs(30),
+            "keepalive idle"
+        );
+        assert_eq!(
+            sock.tcp_keepalive_interval().unwrap(),
+            Duration::from_secs(10),
+            "probe interval"
+        );
+        assert_eq!(sock.tcp_keepalive_retries().unwrap(), 3, "probe retries");
     }
 
     #[test]
