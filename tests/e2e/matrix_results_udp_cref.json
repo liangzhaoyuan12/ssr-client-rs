@@ -1,0 +1,30 @@
+{
+  "client": "C-REF",
+  "server_sha12": "d70342262c45",
+  "results": [
+    {
+      "axis": "udp",
+      "method": "aes-256-cfb+auth_chain_a",
+      "protocol": "",
+      "obfs": "",
+      "http": "ERR",
+      "detail": ""
+    },
+    {
+      "axis": "udp",
+      "method": "aes-256-cfb+auth_aes128_sha1",
+      "protocol": "",
+      "obfs": "",
+      "http": "ERR",
+      "detail": ""
+    },
+    {
+      "axis": "udp",
+      "method": "aes-128-gcm+origin (AEAD)",
+      "protocol": "",
+      "obfs": "",
+      "http": "ERR",
+      "detail": ""
+    }
+  ]
+}

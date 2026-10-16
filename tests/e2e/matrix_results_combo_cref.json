@@ -15,8 +15,8 @@
       "method": "none",
       "protocol": "origin",
       "obfs": "http_simple",
-      "http": "200",
-      "detail": ""
+      "http": "ERR",
+      "detail": "ssr-server 2026/10/16 11:09 error  \u001b[31munexpect tunnel terminated. about _client_ \"(null)\": Unknown system er"
     },
     {
       "axis": "combo",
@@ -87,8 +87,8 @@
       "method": "table",
       "protocol": "origin",
       "obfs": "http_simple",
-      "http": "200",
-      "detail": ""
+      "http": "ERR",
+      "detail": "ssr-server 2026/10/16 11:09 error  \u001b[31munexpect tunnel terminated. about _client_ \"(null)\": Unknown system er"
     },
     {
       "axis": "combo",
@@ -167,7 +167,7 @@
       "method": "aes-256-cfb",
       "protocol": "origin",
       "obfs": "tls1.2_ticket_auth",
-      "http": "200",
+      "http": "ERR",
       "detail": ""
     },
     {
@@ -183,7 +183,7 @@
       "method": "aes-256-cfb",
       "protocol": "auth_aes128_sha1",
       "obfs": "http_simple",
-      "http": "200",
+      "http": "ERR",
       "detail": ""
     },
     {
