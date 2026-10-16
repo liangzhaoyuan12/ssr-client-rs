@@ -1,6 +1,6 @@
 [package]
 name = "ssr-client-rs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 # MSRV floor: std::iter::repeat_n (1.82) is the newest std API used.
 rust-version = "1.82"

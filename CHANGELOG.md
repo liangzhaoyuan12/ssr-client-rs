@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-10-16
+
+Weak-network hardening + performance batch (GOAL.md Phases 0–6). No breaking
+changes; the public API is byte-identical to 0.1.0.
+
 ### Performance
 
 - **Per-connection cipher environment cache**: the substitution table / key
@@ -57,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (verified by an API snapshot diff; all additions are `pub(crate)` /
   private).
 
-## [0.1.0] — unreleased
+## [0.1.0]
 
 First release: a byte-compatible Rust port of the ssr-n client.
 
